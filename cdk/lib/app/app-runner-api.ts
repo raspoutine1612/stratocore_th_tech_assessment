@@ -5,7 +5,6 @@ import * as kms from 'aws-cdk-lib/aws-kms';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 import { AppRunner } from '../constructs/compute/app-runner';
-import { LogGroup } from '../constructs/observability/log-group';
 import { IamRole } from '../constructs/security/iam-role';
 import { KmsKey } from '../constructs/security/kms-key';
 
@@ -25,7 +24,8 @@ export interface AppRunnerApiProps {
 /**
  * The App Runner compute target for stratocore.
  *
- * Creates: KMS key + LogGroup, instance role, AppRunner service.
+ * Creates: instance role, AppRunner service.
+ * App Runner writes its own logs to /aws/apprunner/{name}/{id}/application and /system.
  * Applies scoped IAM grants for S3 and DynamoDB internally.
  */
 export class AppRunnerApi extends Construct {
@@ -35,18 +35,6 @@ export class AppRunnerApi extends Construct {
 
   constructor(scope: Construct, id: string, props: AppRunnerApiProps) {
     super(scope, id);
-
-    const logKey = new KmsKey(this, 'LogKey', {
-      description: 'Encrypts App Runner container logs in CloudWatch',
-      removalPolicy: props.removalPolicy,
-    });
-
-    const logGroup = new LogGroup(this, 'LogGroup', {
-      logGroupName: '/file-api/app-runner/application',
-      // LogGroup expects KmsKey (our construct), not kms.Key.
-      encryptionKey: logKey,
-      removalPolicy: props.removalPolicy,
-    });
 
     const instanceRole = new IamRole(this, 'InstanceRole', {
       assumedBy: new iam.ServicePrincipal('tasks.apprunner.amazonaws.com'),
@@ -84,7 +72,6 @@ export class AppRunnerApi extends Construct {
 
     const runner = new AppRunner(this, 'Service', {
       imageUri: props.imageUri,
-      logGroup: logGroup.logGroup,
       instanceRole: instanceRole.role,
       environment: {
         AWS_REGION: props.awsRegion,

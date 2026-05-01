@@ -44,7 +44,7 @@ export class LogGroup extends Construct {
     this.logGroup = new logs.LogGroup(this, 'LogGroup', {
       logGroupName: props.logGroupName,
       encryptionKey: props.encryptionKey.key,
-      retention: props.retention ?? logs.RetentionDays.THREE_MONTHS,
+      retention: props.retention ?? logs.RetentionDays.TWO_MONTHS,
       removalPolicy: props.removalPolicy ?? cdk.RemovalPolicy.RETAIN,
     });
   }

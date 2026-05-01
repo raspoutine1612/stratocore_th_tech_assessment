@@ -72,7 +72,6 @@ export class PipelineStack extends cdk.Stack {
     const appRunnerArn = ssm.StringParameter.valueForStringParameter(this, `${p}/app-runner-service-arn`);
 
     const sourceOutput = new codepipeline.Artifact('Source');
-    const buildOutput = new codepipeline.Artifact('Build');
 
     // One KMS key shared by both pipeline log groups.
     const logKey = new KmsKey(this, 'PipelineLogKey', {
@@ -85,6 +84,41 @@ export class PipelineStack extends cdk.Stack {
     const deployLogGroup = new LogGroup(this, 'DeployLogGroup', {
       logGroupName: '/file-api/pipeline/deploy',
       encryptionKey: logKey,
+    });
+    const qualityLogGroup = new LogGroup(this, 'QualityLogGroup', {
+      logGroupName: '/file-api/pipeline/quality',
+      encryptionKey: logKey,
+    });
+
+    // Stage 1b — quality gate: linting, type checking, security scan, dependency audit.
+    const qualityProject = new codebuild.PipelineProject(this, 'QualityProject', {
+      description: 'Runs ruff, mypy, bandit and pip-audit on the application code',
+      environment: { buildImage: codebuild.LinuxBuildImage.STANDARD_7_0 },
+      logging: {
+        cloudWatch: {
+          logGroup: qualityLogGroup.logGroup,
+          prefix: 'quality',
+          enabled: true,
+        },
+      },
+      buildSpec: codebuild.BuildSpec.fromObject({
+        version: '0.2',
+        phases: {
+          install: {
+            'runtime-versions': { python: '3.12' },
+            commands: ['pip install ruff mypy bandit pip-audit -r app/requirements.txt'],
+          },
+          build: {
+            commands: [
+              'ruff check app/',
+              'ruff format --check app/',
+              'mypy app/',
+              'bandit -r app/ -ll',
+              'pip-audit -r app/requirements.txt',
+            ],
+          },
+        },
+      }),
     });
 
     // Stage 2 — build Docker image and push to ECR.
@@ -203,13 +237,22 @@ export class PipelineStack extends cdk.Stack {
           ],
         },
         {
+          stageName: 'QualityGate',
+          actions: [
+            new actions.CodeBuildAction({
+              actionName: 'Lint_TypeCheck_Scan',
+              project: qualityProject,
+              input: sourceOutput,
+            }),
+          ],
+        },
+        {
           stageName: 'Build',
           actions: [
             new actions.CodeBuildAction({
               actionName: 'BuildAndPush',
               project: buildProject,
               input: sourceOutput,
-              outputs: [buildOutput],
             }),
           ],
         },
@@ -219,7 +262,7 @@ export class PipelineStack extends cdk.Stack {
             new actions.CodeBuildAction({
               actionName: 'DeployToEcsAndAppRunner',
               project: deployProject,
-              input: buildOutput,
+              input: sourceOutput,
             }),
           ],
         },

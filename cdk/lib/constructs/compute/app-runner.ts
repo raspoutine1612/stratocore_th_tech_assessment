@@ -1,14 +1,11 @@
 import * as apprunner from 'aws-cdk-lib/aws-apprunner';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { IamRole } from '../security/iam-role';
 
 export interface AppRunnerProps {
   /** Full ECR image URI including tag. */
   readonly imageUri: string;
-  /** Log group where App Runner forwards application logs via CloudWatch. */
-  readonly logGroup: logs.ILogGroup;
   /**
    * Instance role — the IAM role the running container assumes.
    * Must grant access to S3 and DynamoDB.
