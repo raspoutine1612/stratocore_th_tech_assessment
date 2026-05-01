@@ -258,24 +258,36 @@ export class PipelineStack extends cdk.Stack {
       resources: [appRunnerArn],
     }));
 
+    // Store the source action so we can reference it in the V2 trigger config.
+    const sourceAction = new actions.CodeStarConnectionsSourceAction({
+      actionName: 'GitHub',
+      owner: githubOwner,
+      repo: githubRepo,
+      branch: githubBranch,
+      connectionArn,
+      output: sourceOutput,
+      // Disable polling-based detection — triggers are handled by the V2 trigger below.
+      triggerOnPush: false,
+    });
+
+    // V2 pipelines use EventBridge webhooks instead of polling.
+    // The trigger below creates an EventBridge rule that fires on every push to the target branch.
     new codepipeline.Pipeline(this, 'Pipeline', {
       pipelineName: `${PROJECT_PREFIX}-pipeline`,
+      pipelineType: codepipeline.PipelineType.V2,
+      triggers: [
+        {
+          providerType: codepipeline.ProviderType.CODE_STAR_SOURCE_CONNECTION,
+          gitConfiguration: {
+            sourceAction,
+            pushFilter: [{ branchesIncludes: [githubBranch] }],
+          },
+        },
+      ],
       stages: [
         {
           stageName: 'Source',
-          actions: [
-            new actions.CodeStarConnectionsSourceAction({
-              actionName: 'GitHub',
-              owner: githubOwner,
-              repo: githubRepo,
-              branch: githubBranch,
-              connectionArn,
-              output: sourceOutput,
-              // Explicitly enable webhook-based trigger via EventBridge.
-              // Without this, pushes to GitHub will not start the pipeline.
-              triggerOnPush: true,
-            }),
-          ],
+          actions: [sourceAction],
         },
         {
           stageName: 'QualityGate',
