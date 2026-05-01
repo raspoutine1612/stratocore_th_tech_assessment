@@ -3,6 +3,7 @@ import * as codebuild from 'aws-cdk-lib/aws-codebuild';
 import * as codepipeline from 'aws-cdk-lib/aws-codepipeline';
 import * as actions from 'aws-cdk-lib/aws-codepipeline-actions';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
+import { Node } from 'constructs';
 import { Construct } from 'constructs';
 import { PROJECT_PREFIX } from '../constants';
 import { BuildProject } from '../constructs/pipeline/build-project';
@@ -29,23 +30,29 @@ import { KmsKey } from '../constructs/security/kms-key';
  * Optional context:
  *  githubBranch          — branch to track (default: main)
  */
+/**
+ * Read a CDK context value and assert it is a non-empty string.
+ * tryGetContext returns `any` — this helper narrows the type and fails fast
+ * at synth time rather than silently passing an undefined value downstream.
+ */
+function requireContext(node: Node, key: string): string {
+  const value: unknown = node.tryGetContext(key);
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`Missing or invalid CDK context key: "${key}". Set it in cdk.json or via --context.`);
+  }
+  return value;
+}
+
 export class PipelineStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    const githubOwner = this.node.tryGetContext('githubOwner') as string;
-    const githubRepo = this.node.tryGetContext('githubRepo') as string;
-    const githubBranch = (this.node.tryGetContext('githubBranch') as string) ?? 'main';
-    const connectionArn = this.node.tryGetContext('githubConnectionArn') as string;
-
-    if (!githubOwner || !githubRepo || !connectionArn) {
-      // Annotations.addError defers the failure to this stack's own synthesis,
-      // so other stacks can still be deployed without this context.
-      cdk.Annotations.of(this).addError(
-        'Missing context: githubOwner, githubRepo, and githubConnectionArn must be set in cdk.json',
-      );
-      return;
-    }
+    const githubOwner    = requireContext(this.node, 'githubOwner');
+    const githubRepo     = requireContext(this.node, 'githubRepo');
+    const connectionArn  = requireContext(this.node, 'githubConnectionArn');
+    // githubBranch is optional — fall back to main.
+    const rawBranch: unknown = this.node.tryGetContext('githubBranch');
+    const githubBranch = typeof rawBranch === 'string' && rawBranch.length > 0 ? rawBranch : 'main';
 
     new ssm.StringParameter(this, 'GitHubConnectionArn', {
       parameterName: `/${PROJECT_PREFIX}/github-connection-arn`,
