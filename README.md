@@ -116,7 +116,13 @@ Both targets run the **same Docker image**. ECS runs it with `uvicorn` (overridd
 │           ├── ecs-stack.ts       # ECS Fargate compute target
 │           ├── lambda-stack.ts    # Lambda + API Gateway compute target
 │           └── pipeline-stack.ts  # CodePipeline CI/CD — 3 stages
+├── tests/
+│   ├── fixtures/
+│   │   ├── hello.txt      # Plain text test fixture
+│   │   └── data.csv       # CSV test fixture
+│   └── test-api.sh        # End-to-end smoke test script
 ├── .env.example           # Reference for required environment variables
+├── RUNBOOK.md             # Step-by-step deployment guide
 └── CLAUDE.md              # Coding guidelines for this project
 ```
 
@@ -334,23 +340,15 @@ aws configure --profile stratocore-dev
 
 ## Deployment
 
-### Prerequisites
-1. AWS CLI configured with a profile that has sufficient permissions
-2. Node.js ≥ 18 and `npm install` run in `cdk/`
-3. A CodeConnections connection created and authorized in the AWS Console (for the pipeline)
+See [RUNBOOK.md](RUNBOOK.md) for the full step-by-step guide (bootstrap, Docker build, stack order, user creation, smoke test, teardown).
 
-### First deploy
+### Stack deployment order
 
-```bash
-cd cdk
-npx cdk deploy file-api-shared --profile stratocore-dev --require-approval never
-npx cdk deploy file-api-network --profile stratocore-dev --require-approval never
-npx cdk deploy file-api-ecs --profile stratocore-dev --require-approval never
-npx cdk deploy file-api-lambda --profile stratocore-dev --require-approval never
-npx cdk deploy file-api-pipeline --profile stratocore-dev --require-approval never
+```
+file-api-shared → file-api-network → file-api-ecs → file-api-lambda → file-api-pipeline
 ```
 
-After first deploy, push to `main` — CodePipeline handles all subsequent deployments automatically.
+After the first deploy, every push to `main` triggers the pipeline automatically — no manual `cdk deploy` needed.
 
 ### NetworkStack
 Reads from SSM. Creates:

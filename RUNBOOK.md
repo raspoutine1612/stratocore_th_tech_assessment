@@ -128,13 +128,20 @@ The ECS stack registers the container with the ALB. The Lambda stack creates the
 Retrieve the endpoints once the stacks are up:
 
 ```bash
-# Lambda — API Gateway URL
-aws ssm get-parameter --name /file-api/lambda-api-url \
-  --profile stratocore-dev --region us-east-1 --query "Parameter.Value" --output text
+# Lambda — API Gateway URL (written as a CloudFormation output by LambdaStack)
+aws cloudformation describe-stacks \
+  --stack-name file-api-lambda \
+  --profile stratocore-dev --region us-east-1 \
+  --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+  --output text
 
-# ECS — ALB DNS name
-aws ssm get-parameter --name /file-api/alb-dns \
-  --profile stratocore-dev --region us-east-1 --query "Parameter.Value" --output text
+# ECS — ALB DNS name (derived from the ALB ARN stored in SSM)
+ALB_ARN=$(aws ssm get-parameter --name /file-api/alb-arn \
+  --profile stratocore-dev --region us-east-1 --query "Parameter.Value" --output text)
+aws elbv2 describe-load-balancers \
+  --load-balancer-arns "$ALB_ARN" \
+  --profile stratocore-dev --region us-east-1 \
+  --query "LoadBalancers[0].DNSName" --output text
 ```
 
 ---
