@@ -31,7 +31,9 @@ async def upload(
     """Upload a file to S3 under the authenticated user's prefix."""
     filename = file.filename or "unnamed"
     if not _FILENAME_RE.match(filename):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid filename.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid filename."
+        )
     content = await file.read()
     if len(content) > _MAX_FILE_SIZE:
         raise HTTPException(
@@ -57,7 +59,9 @@ def delete_user_file(
 ) -> None:
     """Delete a file belonging to the authenticated user."""
     if not _FILENAME_RE.match(filename):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid filename.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid filename."
+        )
     delete_file(username, filename)
 
 
