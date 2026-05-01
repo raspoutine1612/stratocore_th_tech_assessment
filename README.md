@@ -7,43 +7,33 @@ A FastAPI application deployed on AWS using two compute strategies — container
 ## Architecture Overview
 
 ```mermaid
-flowchart TD
+flowchart LR
     Client([Client])
 
-    subgraph VPC
-        subgraph Public["Public Subnets"]
-            ALB["ALB\nHTTP :80"]
+    subgraph AWS
+        APIGW["API Gateway\nHTTPS"]
+
+        subgraph VPC["VPC (private subnets)"]
+            ALB["ALB\nHTTP"]
+            ECS["ECS Fargate"]
+            Lambda["Lambda"]
         end
-        subgraph Private["Private Subnets"]
-            ECS["ECS Fargate\nuvicorn · FastAPI"]
-            Lambda["Lambda\nawslambdaric · Mangum · FastAPI"]
-        end
+
+        ECR[("ECR\nsame image")]
+        S3[("S3\nKMS")]
+        Dynamo[("DynamoDB\nKMS")]
     end
 
-    subgraph Shared["Shared Resources"]
-        ECR["ECR\n(same image)"]
-        S3["S3\nKMS encrypted"]
-        Dynamo["DynamoDB\nKMS encrypted"]
-        SSM["SSM Parameter Store\n(cross-stack refs)"]
-    end
+    Client -->|HTTPS| APIGW --> Lambda
+    Client -->|HTTP| ALB --> ECS
 
-    APIGW["API Gateway\nHTTPS"]
+    ECR -.->|pull| ECS
+    ECR -.->|pull| Lambda
 
-    Client -->|HTTP| ALB
-    Client -->|HTTPS| APIGW
-    ALB --> ECS
-    APIGW --> Lambda
-
-    ECR -->|pull image| ECS
-    ECR -->|pull image| Lambda
-
-    ECS -->|GetItem| Dynamo
-    Lambda -->|GetItem| Dynamo
-    ECS -->|PutObject / GetObject\nDeleteObject / ListBucket| S3
-    Lambda -->|PutObject / GetObject\nDeleteObject / ListBucket| S3
-
-    SSM -.->|ARNs at deploy time| ECS
-    SSM -.->|ARNs at deploy time| Lambda
+    ECS --> S3
+    ECS --> Dynamo
+    Lambda --> S3
+    Lambda --> Dynamo
 ```
 
 Both targets run the **same Docker image**. ECS runs it with `uvicorn` (overridden via the task definition `command`). Lambda runs it with `awslambdaric` as the entrypoint and `main.handler` (Mangum) as the handler.
