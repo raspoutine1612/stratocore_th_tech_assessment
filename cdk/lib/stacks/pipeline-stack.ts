@@ -16,7 +16,7 @@ import { KmsKey } from '../constructs/security/kms-key';
  * Stages:
  *  1. Source  — GitHub via CodeStar Connection (managed by this stack).
  *  2. Build   — CodeBuild: docker build + push to ECR (latest + short SHA tags).
- *  3. Deploy  — CodeBuild: rolling ECS update + App Runner deployment trigger.
+ *  3. Deploy  — CodeBuild: rolling ECS update + Lambda function code update.
  *
  * Required context (set in cdk.json):
  *  githubOwner           — GitHub username or org
@@ -243,7 +243,8 @@ export class PipelineStack extends cdk.Stack {
     });
 
     deployProject.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['ecs:UpdateService'],
+      // ecs:DescribeServices is required by `aws ecs wait services-stable`.
+      actions: ['ecs:UpdateService', 'ecs:DescribeServices'],
       resources: [
         `arn:aws:ecs:${this.region}:${this.account}:service/${ecsClusterName}/${ecsServiceName}`,
       ],
@@ -251,7 +252,7 @@ export class PipelineStack extends cdk.Stack {
     deployProject.addToRolePolicy(new iam.PolicyStatement({
       actions: ['lambda:UpdateFunctionCode'],
       resources: [
-        `arn:aws:lambda:${this.region}:${this.account}:function:*`,
+        `arn:aws:lambda:${this.region}:${this.account}:function:${lambdaFunctionName}`,
       ],
     }));
 
