@@ -210,7 +210,7 @@ On each request, FastAPI reads the `Authorization` header, fetches the user from
 
 Files are namespaced per user: `files/{username}/{filename}`. Filenames are validated against `[A-Za-z0-9._-]+` — ASCII only, preventing path traversal and Unicode-related S3 key issues. Upload size is capped at 10 MB.
 
-**Lambda endpoint:** `https://5y0f81j2ee.execute-api.us-east-1.amazonaws.com`
+**Lambda endpoint:** `https://g4zeui4e9b.execute-api.us-east-1.amazonaws.com`
 
 ---
 
@@ -222,7 +222,7 @@ Async-first, automatic OpenAPI docs, native type hints with Pydantic validation.
 ### Why the same image for ECS and Lambda?
 Build once, deploy twice. The Dockerfile uses a multi-stage build and is dual-mode:
 - **Lambda:** `ENTRYPOINT ["python", "-m", "awslambdaric"]` + `CMD ["main.handler"]` — the Lambda Runtime Interface Client bootstraps the execution environment.
-- **ECS:** task definition overrides `CMD` to `["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]`.
+- **ECS:** task definition overrides both `ENTRYPOINT` to `["uvicorn"]` and `CMD` to `["main:app", "--host", "0.0.0.0", "--port", "8000"]`.
 
 `mangum` wraps the FastAPI ASGI app and translates Lambda event payloads to ASGI scope/receive/send.
 
@@ -250,7 +250,7 @@ Constructs bundle a resource with its security defaults, lifecycle config, and g
 ### Dual-mode container (ECS + Lambda from the same image)
 **Problem:** The initial Dockerfile used `CMD ["uvicorn", ...]` as the default entrypoint. When the same image was deployed to Lambda, it started uvicorn instead of the Lambda Runtime Interface Client, causing Lambda to fail with "Service Unavailable" on every invocation.
 
-**Solution:** Flipped the default to Lambda mode: `ENTRYPOINT ["python", "-m", "awslambdaric"]` + `CMD ["main.handler"]`. ECS overrides `CMD` in the task definition. This is the correct pattern for non-Lambda base images (no `FROM public.ecr.aws/lambda/python` needed).
+**Solution:** Flipped the default to Lambda mode: `ENTRYPOINT ["python", "-m", "awslambdaric"]` + `CMD ["main.handler"]`. ECS overrides both `ENTRYPOINT` and `CMD` in the task definition — overriding only `CMD` leaves `awslambdaric` as the entrypoint, which crashes on ECS because `AWS_LAMBDA_RUNTIME_API` is not set. This is the correct pattern for non-Lambda base images (no `FROM public.ecr.aws/lambda/python` needed).
 
 ### `fromRepositoryArn` with SSM late-bound tokens
 **Problem:** `ecr.Repository.fromRepositoryArn(scope, id, arn)` calls `.split('/')` on the ARN at synth time to derive the repository name. When the ARN is a late-bound SSM token (`resolve:ssm:...`), the split returns the token string itself, causing CDK to generate an invalid repository name and a CloudFormation error at deploy time.
