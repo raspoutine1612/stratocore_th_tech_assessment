@@ -6,23 +6,44 @@ A FastAPI application deployed on AWS using two compute strategies — container
 
 ## Architecture Overview
 
-```
-                         ┌─────────────────────────────────────────┐
-                         │               AWS Cloud                 │
-                         │                                         │
-  Client ──HTTP──►  ALB  │──► ECS Fargate (private subnet)         │
-                         │         │                               │
-  Client ──HTTPS──► API  │         │                               │
-          Gateway        │──► Lambda (private subnet)              │
-                         │         │                               │
-                         │    ┌────┴────────────────────┐          │
-                         │    │  S3 (KMS)  DynamoDB (KMS)│         │
-                         │    └─────────────────────────┘          │
-                         │                                         │
-                         │    ECR ──► ECS / Lambda (same image)    │
-                         │    CodePipeline ──► CodeBuild (CI/CD)   │
-                         │    SSM Parameter Store (cross-stack)    │
-                         └─────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    Client([Client])
+
+    subgraph VPC
+        subgraph Public["Public Subnets"]
+            ALB["ALB\nHTTP :80"]
+        end
+        subgraph Private["Private Subnets"]
+            ECS["ECS Fargate\nuvicorn · FastAPI"]
+            Lambda["Lambda\nawslambdaric · Mangum · FastAPI"]
+        end
+    end
+
+    subgraph Shared["Shared Resources"]
+        ECR["ECR\n(same image)"]
+        S3["S3\nKMS encrypted"]
+        Dynamo["DynamoDB\nKMS encrypted"]
+        SSM["SSM Parameter Store\n(cross-stack refs)"]
+    end
+
+    APIGW["API Gateway\nHTTPS"]
+
+    Client -->|HTTP| ALB
+    Client -->|HTTPS| APIGW
+    ALB --> ECS
+    APIGW --> Lambda
+
+    ECR -->|pull image| ECS
+    ECR -->|pull image| Lambda
+
+    ECS -->|GetItem| Dynamo
+    Lambda -->|GetItem| Dynamo
+    ECS -->|PutObject / GetObject\nDeleteObject / ListBucket| S3
+    Lambda -->|PutObject / GetObject\nDeleteObject / ListBucket| S3
+
+    SSM -.->|ARNs at deploy time| ECS
+    SSM -.->|ARNs at deploy time| Lambda
 ```
 
 Both targets run the **same Docker image**. ECS runs it with `uvicorn` (overridden via the task definition `command`). Lambda runs it with `awslambdaric` as the entrypoint and `main.handler` (Mangum) as the handler.
@@ -493,30 +514,41 @@ Files are stored in S3 at `files/{username}/{filename}`. S3 is the single source
 
 Three stages. A failure at any stage blocks everything downstream.
 
-```
-Source (GitHub / CodeCommit)
-    │
-    ▼
-Stage 1 — Quality Gate
-    ├── ruff check              # Lint
-    ├── ruff format --check     # Format
-    ├── mypy app/               # Type checking
-    ├── bandit -r app/          # Python SAST
-    ├── pip-audit               # Dependency CVE scan
-    └── SonarCloud scan         # Full SAST + code smells
-    │
-    ▼
-Stage 2 — Build & Image Scan
-    ├── docker build
-    ├── docker push → ECR
-    └── Block if CRITICAL or HIGH CVEs found in image
-    │
-    ▼
-Stage 3 — Deploy
-    ├── cdk deploy SharedStack
-    ├── cdk deploy NetworkStack
-    ├── cdk deploy EcsStack     → ECS rolling update
-    └── cdk deploy LambdaStack  → Lambda update
+```mermaid
+flowchart TD
+    GH(["GitHub\nmain branch"])
+
+    subgraph Stage1["Stage 1 — Quality Gate (parallel)"]
+        Lint["ruff check\n+ ruff format --check"]
+        Mypy["mypy\nstatic type checking"]
+        Bandit["bandit\nPython SAST"]
+        Audit["pip-audit\nCVE scan"]
+    end
+
+    subgraph Stage2["Stage 2 — Build"]
+        Build["docker build"]
+        Push["docker push\nECR :latest + :sha"]
+        Scan["ECR image scan\n(block on CRITICAL/HIGH)"]
+    end
+
+    subgraph Stage3["Stage 3 — Deploy"]
+        EcsDeploy["ECS rolling update\n+ wait services-stable"]
+        LambdaDeploy["Lambda\nupdate-function-code"]
+    end
+
+    GH -->|"webhook trigger"| Lint
+    GH --> Mypy
+    GH --> Bandit
+    GH --> Audit
+
+    Lint --> Build
+    Mypy --> Build
+    Bandit --> Build
+    Audit --> Build
+
+    Build --> Push --> Scan
+    Scan --> EcsDeploy
+    Scan --> LambdaDeploy
 ```
 
 ### Quality tools
