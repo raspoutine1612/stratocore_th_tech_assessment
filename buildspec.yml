@@ -1,0 +1,47 @@
+version: 0.2
+
+# Build stage: docker build + push to ECR.
+# The quality gate and deploy stages are defined inline in the CDK pipeline construct.
+
+env:
+  variables:
+    IMAGE_TAG: $CODEBUILD_RESOLVED_SOURCE_VERSION
+
+phases:
+  pre_build:
+    commands:
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO_URI
+
+  build:
+    commands:
+      - docker build -t $ECR_REPO_URI:$IMAGE_TAG ./app
+      - docker push $ECR_REPO_URI:$IMAGE_TAG
+      - docker tag $ECR_REPO_URI:$IMAGE_TAG $ECR_REPO_URI:latest
+      - docker push $ECR_REPO_URI:latest
+
+  post_build:
+    commands:
+      # Wait for ECR basic scan to complete and fail the build on HIGH or CRITICAL findings.
+      - |
+        RESULT=$(aws ecr wait image-scan-complete \
+          --repository-name $(echo $ECR_REPO_URI | cut -d'/' -f2) \
+          --image-id imageTag=$IMAGE_TAG \
+          --region $AWS_REGION 2>&1) || true
+      - |
+        FINDINGS=$(aws ecr describe-image-scan-findings \
+          --repository-name $(echo $ECR_REPO_URI | cut -d'/' -f2) \
+          --image-id imageTag=$IMAGE_TAG \
+          --region $AWS_REGION \
+          --query 'imageScanFindings.findingSeverityCounts' \
+          --output json)
+        echo "Scan findings: $FINDINGS"
+        HIGH=$(echo $FINDINGS | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('HIGH',0)+d.get('CRITICAL',0))")
+        if [ "$HIGH" -gt "0" ]; then
+          echo "Build blocked: $HIGH HIGH/CRITICAL CVEs found in image."
+          exit 1
+        fi
+      - printf '[{"name":"Api","imageUri":"%s"}]' $ECR_REPO_URI:$IMAGE_TAG > imagedefinitions.json
+
+artifacts:
+  files:
+    - imagedefinitions.json

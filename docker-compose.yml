@@ -1,0 +1,48 @@
+services:
+
+  # Emulates S3 and DynamoDB locally.
+  localstack:
+    image: localstack/localstack:3
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: s3,dynamodb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  # Creates the S3 bucket, DynamoDB table, and a test user.
+  # Runs once and exits — the app starts only after this completes successfully.
+  init:
+    image: python:3.12-slim
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: ${AWS_REGION:-eu-west-1}
+      AWS_ENDPOINT_URL: http://localstack:4566
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-stratocore-local}
+      DYNAMO_TABLE_NAME: ${DYNAMO_TABLE_NAME:-users-local}
+    volumes:
+      - ./scripts/init-local.py:/init-local.py:ro
+    command: >
+      sh -c "pip install boto3==1.38.0 bcrypt==4.3.0 -q && python /init-local.py"
+
+  app:
+    build: ./app
+    ports:
+      - "8000:8000"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    environment:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: ${AWS_REGION:-eu-west-1}
+      AWS_ENDPOINT_URL: http://localstack:4566
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-stratocore-local}
+      DYNAMO_TABLE_NAME: ${DYNAMO_TABLE_NAME:-users-local}
