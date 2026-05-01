@@ -83,7 +83,7 @@ export class LambdaApi extends Construct {
       managedPolicies,
     });
 
-    grantStorageAccess(this, executionRole.role, {
+    grantStorageAccess(this, 'StorageGrants', executionRole.role, {
       bucketArn: props.bucketArn,
       bucketKmsKeyArn: props.bucketKmsKeyArn,
       tableArn: props.tableArn,

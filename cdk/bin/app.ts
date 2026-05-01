@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib';
 import { PROJECT_PREFIX } from '../lib/constants';
-import { AppRunnerStack } from '../lib/stacks/app-runner-stack';
 import { EcsStack } from '../lib/stacks/ecs-stack';
 import { LambdaStack } from '../lib/stacks/lambda-stack';
 import { NetworkStack } from '../lib/stacks/network-stack';
@@ -48,6 +47,5 @@ cdk.Tags.of(app).add('Version', version);
 new SharedStack(app, `${PROJECT_PREFIX}-shared`, { env });
 new NetworkStack(app, `${PROJECT_PREFIX}-network`, { env });
 new EcsStack(app, `${PROJECT_PREFIX}-ecs`, { env });
-new AppRunnerStack(app, `${PROJECT_PREFIX}-app-runner`, { env });
 new LambdaStack(app, `${PROJECT_PREFIX}-lambda`, { env });
 new PipelineStack(app, `${PROJECT_PREFIX}-pipeline`, { env });

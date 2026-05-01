@@ -10,7 +10,6 @@ import { EcrRepository } from '../constructs/compute/ecr-repository';
  * SharedStack — durable shared resources.
  *
  * SSM parameters written (prefix: /file-api):
- * - /file-api/aws-region
  * - /file-api/bucket-name
  * - /file-api/bucket-arn
  * - /file-api/bucket-kms-key-arn
@@ -19,6 +18,7 @@ import { EcrRepository } from '../constructs/compute/ecr-repository';
  * - /file-api/dynamo-kms-key-arn
  * - /file-api/ecr-repo-uri
  * - /file-api/ecr-repo-arn
+ * - /file-api/ecr-repo-name
  */
 export class SharedStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -34,10 +34,6 @@ export class SharedStack extends cdk.Stack {
       storage.grantAdminAccess(new iam.ArnPrincipal(adminArn));
     }
 
-    new ssm.StringParameter(this, 'AwsRegion', {
-      parameterName: `/${PROJECT_PREFIX}/aws-region`,
-      stringValue: this.region,
-    });
     new ssm.StringParameter(this, 'BucketName', {
       parameterName: `/${PROJECT_PREFIX}/bucket-name`,
       stringValue: storage.bucket.bucket.bucketName,

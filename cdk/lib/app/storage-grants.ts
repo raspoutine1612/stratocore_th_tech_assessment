@@ -24,16 +24,24 @@ export interface StorageGrantProps {
  * DynamoDB: GetItem (read-only — authentication only, no writes from the app)
  *           KMS Decrypt on the table key
  *
+ * The `id` parameter is used as a CDK construct ID prefix, which prevents
+ * node ID collisions when the function is called multiple times in the same scope.
+ *
  * Used by both EcsApi and LambdaApi so that grants stay in sync between targets.
  */
 export function grantStorageAccess(
   scope: Construct,
+  id: string,
   grantee: iam.IGrantable,
   props: StorageGrantProps,
 ): void {
+  // A dedicated sub-construct scopes all imported resources under a unique node path,
+  // preventing ID collisions if this function is called more than once per scope.
+  const sub = new Construct(scope, id);
+
   // S3 grants — fromBucketAttributes returns IBucket with no grant() method,
   // so we use iam.Grant.addToPrincipal for exact action scoping.
-  const bucketKey = kms.Key.fromKeyArn(scope, 'BucketKey', props.bucketKmsKeyArn);
+  const bucketKey = kms.Key.fromKeyArn(sub, 'BucketKey', props.bucketKmsKeyArn);
 
   iam.Grant.addToPrincipal({
     grantee,
@@ -48,8 +56,8 @@ export function grantStorageAccess(
   bucketKey.grantEncryptDecrypt(grantee);
 
   // DynamoDB grants — ITable has grant(), no raw PolicyStatement needed.
-  const tableKey = kms.Key.fromKeyArn(scope, 'TableKey', props.tableKmsKeyArn);
-  const table = dynamodb.Table.fromTableAttributes(scope, 'Table', {
+  const tableKey = kms.Key.fromKeyArn(sub, 'TableKey', props.tableKmsKeyArn);
+  const table = dynamodb.Table.fromTableAttributes(sub, 'Table', {
     tableArn: props.tableArn,
     encryptionKey: tableKey,
   });

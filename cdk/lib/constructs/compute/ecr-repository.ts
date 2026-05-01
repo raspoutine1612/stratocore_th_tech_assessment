@@ -18,7 +18,7 @@ export interface EcrRepositoryProps {
 /**
  * An ECR repository with basic image scanning enabled on every push.
  *
- * Shared by ECS and App Runner — both pull the same Docker image.
+ * Shared by ECS and Lambda — both pull the same Docker image.
  */
 export class EcrRepository extends Construct {
   /** The underlying CDK repository. */

@@ -65,7 +65,7 @@ export class EcsApi extends Construct {
     // fromBucketAttributes returns IBucket which has no grant() method.
     // fromTableAttributes returns ITable with limited grant() — and both use SSM tokens.
     // grantStorageAccess centralises all S3 + DynamoDB + KMS grants for both compute targets.
-    grantStorageAccess(this, taskRole.role, {
+    grantStorageAccess(this, 'StorageGrants', taskRole.role, {
       bucketArn: props.bucketArn,
       bucketKmsKeyArn: props.bucketKmsKeyArn,
       tableArn: props.tableArn,
