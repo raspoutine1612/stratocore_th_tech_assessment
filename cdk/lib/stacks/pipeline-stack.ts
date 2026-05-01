@@ -206,9 +206,9 @@ export class PipelineStack extends cdk.Stack {
       resources: [ecrRepoArn],
     }));
 
-    // Stage 3 — trigger rolling ECS update and App Runner deployment.
+    // Stage 3 — trigger rolling ECS update and Lambda function code update.
     const deployProject = new codebuild.PipelineProject(this, 'DeployProject', {
-      description: 'Triggers ECS rolling update and App Runner redeployment',
+      description: 'Triggers ECS rolling update and Lambda function code update',
       logging: {
         cloudWatch: {
           logGroup: deployLogGroup.logGroup,
@@ -231,7 +231,9 @@ export class PipelineStack extends cdk.Stack {
           build: {
             commands: [
               // Update ECS service — forces a new task deployment with the latest image.
+              // Wait for the new tasks to be healthy before continuing.
               'aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --force-new-deployment',
+              'aws ecs wait services-stable --cluster $ECS_CLUSTER --services $ECS_SERVICE',
               // Update Lambda function image — points the function to the newly pushed image.
               'aws lambda update-function-code --function-name $LAMBDA_FUNCTION_NAME --image-uri $ECR_REPO_URI:latest',
             ],

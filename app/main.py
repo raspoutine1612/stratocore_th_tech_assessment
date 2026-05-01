@@ -5,13 +5,21 @@ Business logic lives in auth.py and storage.py.
 Wrapped with Mangum to support both ECS/uvicorn and AWS Lambda deployments.
 """
 
-from fastapi import Depends, FastAPI, File, UploadFile
+import re
+
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
 from mangum import Mangum
 
 from auth import require_authenticated_user
 from storage import delete_file, list_files, upload_file
 
 app = FastAPI(title="stratocore")
+
+# Maximum upload size — prevents abuse and stays within Lambda's 6 MB payload limit.
+_MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+
+# Allowed filename characters — prevents path traversal attacks.
+_FILENAME_RE = re.compile(r"^[\w.\-]+$")
 
 
 @app.get("/health")
@@ -26,9 +34,14 @@ async def upload(
     username: str = Depends(require_authenticated_user),
 ) -> dict[str, str]:
     """Upload a file to S3 under the authenticated user's prefix."""
+    filename = file.filename or "unnamed"
+    if not _FILENAME_RE.match(filename):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid filename.")
     content = await file.read()
-    upload_file(username, file.filename or "unnamed", content)
-    return {"filename": file.filename or "unnamed"}
+    if len(content) > _MAX_FILE_SIZE:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File too large. Maximum size is 10 MB.")
+    upload_file(username, filename, content)
+    return {"filename": filename}
 
 
 @app.get("/files")
@@ -45,6 +58,8 @@ def delete_user_file(
     username: str = Depends(require_authenticated_user),
 ) -> None:
     """Delete a file belonging to the authenticated user."""
+    if not _FILENAME_RE.match(filename):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid filename.")
     delete_file(username, filename)
 
 

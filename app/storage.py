@@ -40,20 +40,31 @@ def list_files(username: str) -> list[str]:
     """
     List all filenames stored under the authenticated user's prefix.
 
+    Paginates through all S3 results — list_objects_v2 returns at most 1000
+    objects per call, so we follow NextContinuationToken until exhausted.
     Returns filenames only, not full S3 keys.
     """
     prefix = f"files/{username}/"
-    try:
-        response = _s3.list_objects_v2(Bucket=_bucket, Prefix=prefix)
-    except ClientError as error:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Storage service unavailable.",
-        ) from error
+    filenames: list[str] = []
+    kwargs: dict = {"Bucket": _bucket, "Prefix": prefix}
 
-    objects = response.get("Contents", [])
-    # Strip the user prefix to return only the filename portion.
-    return [obj["Key"].removeprefix(prefix) for obj in objects]
+    while True:
+        try:
+            response = _s3.list_objects_v2(**kwargs)
+        except ClientError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Storage service unavailable.",
+            ) from error
+
+        for obj in response.get("Contents", []):
+            filenames.append(obj["Key"].removeprefix(prefix))
+
+        if not response.get("IsTruncated"):
+            break
+        kwargs["ContinuationToken"] = response["NextContinuationToken"]
+
+    return filenames
 
 
 def delete_file(username: str, filename: str) -> None:
