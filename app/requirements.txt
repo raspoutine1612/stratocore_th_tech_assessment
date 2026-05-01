@@ -1,6 +1,6 @@
-fastapi==0.115.12
-uvicorn[standard]==0.34.2
-mangum==0.19.0
-boto3==1.38.0
-bcrypt==4.3.0
-python-multipart==0.0.20
+fastapi==0.136.1
+uvicorn[standard]==0.46.0
+mangum==0.21.0
+boto3==1.43.1
+bcrypt==5.0.0
+python-multipart==0.0.27
