@@ -82,6 +82,9 @@ export class EcsFargate extends Construct {
 
     taskDefinition.addContainer('Api', {
       image: ecs.ContainerImage.fromRegistry(props.imageUri),
+      // Override the Dockerfile ENTRYPOINT/CMD — the image defaults to the Lambda handler.
+      // ECS runs uvicorn as a long-lived web server instead.
+      command: ['uvicorn', 'main:app', '--host', '0.0.0.0', '--port', '8000'],
       portMappings: [{ containerPort: port }],
       environment: props.environment,
       logging: ecs.LogDrivers.awsLogs({

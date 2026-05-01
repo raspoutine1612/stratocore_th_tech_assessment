@@ -70,5 +70,9 @@ export class SharedStack extends cdk.Stack {
       parameterName: `/${PROJECT_PREFIX}/ecr-repo-arn`,
       stringValue: ecr.repository.repositoryArn,
     });
+    new ssm.StringParameter(this, 'EcrRepoName', {
+      parameterName: `/${PROJECT_PREFIX}/ecr-repo-name`,
+      stringValue: ecr.repository.repositoryName,
+    });
   }
 }

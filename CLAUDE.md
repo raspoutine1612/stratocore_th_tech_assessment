@@ -7,8 +7,10 @@ Guidelines for this project. Apply these rules to every file generated or modifi
 ## Context
 
 This project is a FastAPI file storage API deployed on AWS using two compute strategies:
-- **Target 1** — ECS Fargate (containerized)
-- **Target 2** — AWS App Runner (containerized, serverless-managed)
+- **Target 1** — ECS Fargate (containerized, always-on)
+- **Target 2** — AWS Lambda + API Gateway HTTP API (containerized, serverless, scales to zero)
+
+The FastAPI app runs inside a Docker container in both targets. For Lambda, `mangum` adapts the ASGI interface to the Lambda event format. The same ECR image is used by both ECS and Lambda.
 
 Infrastructure is managed with AWS CDK in TypeScript. The developer has a Terraform background and is learning CDK — keep code simple, explicit, and well-commented on CDK-specific patterns the first time they appear.
 
@@ -42,6 +44,7 @@ Infrastructure is managed with AWS CDK in TypeScript. The developer has a Terraf
 - **Block all public access on S3 buckets.** `BlockPublicAccess.BLOCK_ALL` always.
 - **Principle of least privilege.** Grants go through construct methods (`grantReadWrite`, `grantRead`) rather than manual IAM policy statements.
 - **No secrets passed as plain environment variables** to ECS or Lambda. Use SSM Parameter Store references in the task/function definition.
+- `AWS_REGION` is injected automatically by the Lambda runtime — never set it manually as an environment variable.
 - **Passwords stored as bcrypt hashes** in DynamoDB. Never store plain text.
 
 ---
@@ -55,6 +58,7 @@ Infrastructure is managed with AWS CDK in TypeScript. The developer has a Terraf
 - **Stacks are thin.** They instantiate constructs, write SSM parameters, and nothing else.
 - Removal policies default to `RETAIN`. `DESTROY` must be explicitly passed and is only acceptable in development stacks.
 - Cross-stack references use **SSM Parameter Store** — never `Fn.importValue`.
+- When referencing an ECR repository by ARN from SSM (late-bound value), use `fromRepositoryAttributes` with both `repositoryArn` and `repositoryName` — `fromRepositoryArn` will throw at synth time.
 
 ---
 

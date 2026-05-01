@@ -23,8 +23,11 @@ COPY . .
 RUN chown -R appuser:appuser /app
 USER appuser
 
-# S3_BUCKET_NAME, DYNAMO_TABLE_NAME and AWS_REGION are injected
-# by the ECS task definition at runtime — not set here.
+# S3_BUCKET_NAME, DYNAMO_TABLE_NAME and AWS_REGION are injected at runtime — not set here.
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# awslambdaric is the Lambda Runtime Interface Client (RIC).
+# It bootstraps the Lambda execution environment for non-Lambda base images.
+# ECS overrides this CMD via the task definition to run uvicorn instead.
+ENTRYPOINT ["python", "-m", "awslambdaric"]
+CMD ["main.handler"]

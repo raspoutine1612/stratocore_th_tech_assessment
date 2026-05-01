@@ -6,6 +6,7 @@
     "@aws-cdk/aws-ecs:arnFormatIncludesClusterName": true,
     "githubOwner": "raspoutine1612",
     "githubRepo": "stratocore_th_tech_assessment",
-    "githubBranch": "main"
+    "githubBranch": "main",
+    "githubConnectionArn": "arn:aws:codeconnections:us-east-1:903936255395:connection/6a2ae9a2-8445-4899-8a23-67d717a3f782"
   }
 }

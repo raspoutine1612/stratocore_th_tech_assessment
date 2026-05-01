@@ -2,7 +2,6 @@ import * as cdk from 'aws-cdk-lib';
 import * as codebuild from 'aws-cdk-lib/aws-codebuild';
 import * as codepipeline from 'aws-cdk-lib/aws-codepipeline';
 import * as actions from 'aws-cdk-lib/aws-codepipeline-actions';
-import * as codestarconnections from 'aws-cdk-lib/aws-codestarconnections';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
@@ -19,17 +18,15 @@ import { KmsKey } from '../constructs/security/kms-key';
  *  2. Build   — CodeBuild: docker build + push to ECR (latest + short SHA tags).
  *  3. Deploy  — CodeBuild: rolling ECS update + App Runner deployment trigger.
  *
- * Required context:
- *  --context githubOwner=<owner>
- *  --context githubRepo=<repo>
+ * Required context (set in cdk.json):
+ *  githubOwner           — GitHub username or org
+ *  githubRepo            — repository name
+ *  githubConnectionArn   — ARN of an AVAILABLE AWS CodeConnections connection
+ *                          (arn:aws:codeconnections:...). Must be created and
+ *                          authorized once in the AWS Console before deploying.
  *
  * Optional context:
- *  --context githubBranch=<branch>   (default: main)
- *
- * One-time manual step after first deploy:
- *  AWS Console → Developer Tools → Connections → find 'file-api-github'
- *  → click 'Update pending connection' → authorize the GitHub OAuth app.
- *  The pipeline will not trigger until the connection is in AVAILABLE state.
+ *  githubBranch          — branch to track (default: main)
  */
 export class PipelineStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -38,29 +35,22 @@ export class PipelineStack extends cdk.Stack {
     const githubOwner = this.node.tryGetContext('githubOwner') as string;
     const githubRepo = this.node.tryGetContext('githubRepo') as string;
     const githubBranch = (this.node.tryGetContext('githubBranch') as string) ?? 'main';
+    const connectionArn = this.node.tryGetContext('githubConnectionArn') as string;
 
-    if (!githubOwner || !githubRepo) {
+    if (!githubOwner || !githubRepo || !connectionArn) {
       // Annotations.addError defers the failure to this stack's own synthesis,
-      // so other stacks can still be deployed without passing GitHub context.
+      // so other stacks can still be deployed without this context.
       cdk.Annotations.of(this).addError(
-        'Missing context. Pass: --context githubOwner=X --context githubRepo=X',
+        'Missing context: githubOwner, githubRepo, and githubConnectionArn must be set in cdk.json',
       );
       return;
     }
 
-    // CDK creates the connection resource, but it starts in PENDING state.
-    // After deploying, go to AWS Console → Developer Tools → Connections
-    // → 'file-api-github' → 'Update pending connection' → authorize GitHub.
-    const connection = new codestarconnections.CfnConnection(this, 'GitHubConnection', {
-      connectionName: `${PROJECT_PREFIX}-github`,
-      providerType: 'GitHub',
-    });
-    const connectionArn = connection.attrConnectionArn;
-
+    // Publish the connection ARN to SSM so other stacks can reference it.
     new ssm.StringParameter(this, 'GitHubConnectionArn', {
       parameterName: `/${PROJECT_PREFIX}/github-connection-arn`,
       stringValue: connectionArn,
-      description: 'CodeStar connection ARN for GitHub — must be authorized in the console after first deploy',
+      description: 'CodeConnections ARN for GitHub — created and authorized manually in the AWS Console',
     });
 
     const p = `/${PROJECT_PREFIX}`;
@@ -69,7 +59,7 @@ export class PipelineStack extends cdk.Stack {
     const ecrRepoArn = ssm.StringParameter.valueForStringParameter(this, `${p}/ecr-repo-arn`);
     const ecsClusterName = ssm.StringParameter.valueForStringParameter(this, `${p}/ecs-cluster-name`);
     const ecsServiceName = ssm.StringParameter.valueForStringParameter(this, `${p}/ecs-service-name`);
-    const appRunnerArn = ssm.StringParameter.valueForStringParameter(this, `${p}/app-runner-service-arn`);
+    const lambdaFunctionName = ssm.StringParameter.valueForStringParameter(this, `${p}/lambda-function-name`);
 
     const sourceOutput = new codepipeline.Artifact('Source');
 
@@ -232,15 +222,18 @@ export class PipelineStack extends cdk.Stack {
       environmentVariables: {
         ECS_CLUSTER: { value: ecsClusterName },
         ECS_SERVICE: { value: ecsServiceName },
-        APP_RUNNER_ARN: { value: appRunnerArn },
+        LAMBDA_FUNCTION_NAME: { value: lambdaFunctionName },
+        ECR_REPO_URI: { value: ecrRepoUri },
       },
       buildSpec: codebuild.BuildSpec.fromObject({
         version: '0.2',
         phases: {
           build: {
             commands: [
+              // Update ECS service — forces a new task deployment with the latest image.
               'aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --force-new-deployment',
-              'aws apprunner start-deployment --service-arn $APP_RUNNER_ARN',
+              // Update Lambda function image — points the function to the newly pushed image.
+              'aws lambda update-function-code --function-name $LAMBDA_FUNCTION_NAME --image-uri $ECR_REPO_URI:latest',
             ],
           },
         },
@@ -254,11 +247,12 @@ export class PipelineStack extends cdk.Stack {
       ],
     }));
     deployProject.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['apprunner:StartDeployment'],
-      resources: [appRunnerArn],
+      actions: ['lambda:UpdateFunctionCode'],
+      resources: [
+        `arn:aws:lambda:${this.region}:${this.account}:function:*`,
+      ],
     }));
 
-    // Store the source action so we can reference it in the V2 trigger config.
     const sourceAction = new actions.CodeStarConnectionsSourceAction({
       actionName: 'GitHub',
       owner: githubOwner,
@@ -266,24 +260,14 @@ export class PipelineStack extends cdk.Stack {
       branch: githubBranch,
       connectionArn,
       output: sourceOutput,
-      // Disable polling-based detection — triggers are handled by the V2 trigger below.
-      triggerOnPush: false,
+      // triggerOnPush defaults to true. For V2 pipelines this creates a webhook-based
+      // trigger (not polling). Do not set it to false — that breaks the trigger.
     });
 
-    // V2 pipelines use EventBridge webhooks instead of polling.
-    // The trigger below creates an EventBridge rule that fires on every push to the target branch.
+    // PipelineType.V2 uses webhook-based triggers instead of polling.
     new codepipeline.Pipeline(this, 'Pipeline', {
       pipelineName: `${PROJECT_PREFIX}-pipeline`,
       pipelineType: codepipeline.PipelineType.V2,
-      triggers: [
-        {
-          providerType: codepipeline.ProviderType.CODE_STAR_SOURCE_CONNECTION,
-          gitConfiguration: {
-            sourceAction,
-            pushFilter: [{ branchesIncludes: [githubBranch] }],
-          },
-        },
-      ],
       stages: [
         {
           stageName: 'Source',
