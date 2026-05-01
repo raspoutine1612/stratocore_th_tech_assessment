@@ -3,6 +3,9 @@
   "context": {
     "@aws-cdk/aws-s3:keepNotificationInImportedBucket": false,
     "@aws-cdk/core:stackRelativeExports": true,
-    "@aws-cdk/aws-ecs:arnFormatIncludesClusterName": true
+    "@aws-cdk/aws-ecs:arnFormatIncludesClusterName": true,
+    "githubOwner": "raspoutine1612",
+    "githubRepo": "stratocore_th_tech_assessment",
+    "githubBranch": "main"
   }
 }

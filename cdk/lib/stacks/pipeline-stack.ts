@@ -271,6 +271,9 @@ export class PipelineStack extends cdk.Stack {
               branch: githubBranch,
               connectionArn,
               output: sourceOutput,
+              // Explicitly enable webhook-based trigger via EventBridge.
+              // Without this, pushes to GitHub will not start the pipeline.
+              triggerOnPush: true,
             }),
           ],
         },
