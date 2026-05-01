@@ -51,7 +51,3 @@ def delete_user_file(
 # Lambda entry point — Mangum translates between the Lambda event format and ASGI.
 # ECS ignores this and uses uvicorn directly (CMD override in the task definition).
 handler = Mangum(app)
-
-
-# Mangum wraps the ASGI app for AWS Lambda — unused when running under uvicorn.
-handler = Mangum(app)
