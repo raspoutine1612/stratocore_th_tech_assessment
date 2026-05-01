@@ -7,6 +7,7 @@ environment variable, set by the ECS task definition or Lambda configuration.
 """
 
 import os
+from typing import Any
 
 import bcrypt
 import boto3
@@ -20,7 +21,7 @@ _dynamodb = boto3.resource("dynamodb", region_name=os.environ["AWS_REGION"])
 _table = _dynamodb.Table(os.environ["DYNAMO_TABLE_NAME"])
 
 
-def _get_user(username: str) -> dict | None:
+def _get_user(username: str) -> dict[str, Any] | None:
     """Fetch a user record from DynamoDB. Returns None if the user does not exist."""
     try:
         response = _table.get_item(Key={"username": username})
@@ -30,7 +31,8 @@ def _get_user(username: str) -> dict | None:
             detail="Authentication service unavailable.",
         ) from error
 
-    return response.get("Item")
+    item: dict[str, Any] | None = response.get("Item")
+    return item
 
 
 def _verify_password(plain_password: str, password_hash: str) -> bool:
