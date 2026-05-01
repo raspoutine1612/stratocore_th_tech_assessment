@@ -7,33 +7,31 @@ A FastAPI application deployed on AWS using two compute strategies — container
 ## Architecture Overview
 
 ```mermaid
-flowchart LR
+flowchart TD
     Client([Client])
+    APIGW["API Gateway"]
 
-    subgraph AWS
-        APIGW["API Gateway\nHTTPS"]
-
-        subgraph VPC["VPC (private subnets)"]
-            ALB["ALB\nHTTP"]
+    subgraph VPC["VPC"]
+        ALB[ALB]
+        subgraph Private["Private Subnets"]
             ECS["ECS Fargate"]
-            Lambda["Lambda"]
+            Lambda[Lambda]
         end
-
-        ECR[("ECR\nsame image")]
-        S3[("S3\nKMS")]
-        Dynamo[("DynamoDB\nKMS")]
     end
 
-    Client -->|HTTPS| APIGW --> Lambda
+    subgraph Shared["Shared Resources"]
+        ECR[("ECR")]
+        S3[("S3 · KMS")]
+        Dynamo[("DynamoDB · KMS")]
+    end
+
     Client -->|HTTP| ALB --> ECS
+    Client -->|HTTPS| APIGW --> Lambda
 
-    ECR -.->|pull| ECS
-    ECR -.->|pull| Lambda
+    ECR -.->|pull| ECS & Lambda
 
-    ECS --> S3
-    ECS --> Dynamo
-    Lambda --> S3
-    Lambda --> Dynamo
+    ECS & Lambda --> S3
+    ECS & Lambda --> Dynamo
 ```
 
 Both targets run the **same Docker image**. ECS runs it with `uvicorn` (overridden via the task definition `command`). Lambda runs it with `awslambdaric` as the entrypoint and `main.handler` (Mangum) as the handler.
