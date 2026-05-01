@@ -85,34 +85,72 @@ export class PipelineStack extends cdk.Stack {
       logGroupName: '/file-api/pipeline/deploy',
       encryptionKey: logKey,
     });
-    const qualityLogGroup = new LogGroup(this, 'QualityLogGroup', {
-      logGroupName: '/file-api/pipeline/quality',
+    const lintLogGroup = new LogGroup(this, 'LintLogGroup', {
+      logGroupName: '/file-api/pipeline/quality/lint',
+      encryptionKey: logKey,
+    });
+    const typecheckLogGroup = new LogGroup(this, 'TypeCheckLogGroup', {
+      logGroupName: '/file-api/pipeline/quality/typecheck',
+      encryptionKey: logKey,
+    });
+    const securityLogGroup = new LogGroup(this, 'SecurityLogGroup', {
+      logGroupName: '/file-api/pipeline/quality/security',
       encryptionKey: logKey,
     });
 
-    // Stage 1b — quality gate: linting, type checking, security scan, dependency audit.
-    const qualityProject = new codebuild.PipelineProject(this, 'QualityProject', {
-      description: 'Runs ruff, mypy, bandit and pip-audit on the application code',
+    // Quality gate — 3 projects run in parallel within the same stage.
+    const lintProject = new codebuild.PipelineProject(this, 'LintProject', {
+      description: 'ruff check + ruff format',
       environment: { buildImage: codebuild.LinuxBuildImage.STANDARD_7_0 },
-      logging: {
-        cloudWatch: {
-          logGroup: qualityLogGroup.logGroup,
-          prefix: 'quality',
-          enabled: true,
-        },
-      },
+      logging: { cloudWatch: { logGroup: lintLogGroup.logGroup, enabled: true } },
       buildSpec: codebuild.BuildSpec.fromObject({
         version: '0.2',
         phases: {
           install: {
             'runtime-versions': { python: '3.12' },
-            commands: ['pip install ruff mypy bandit pip-audit -r app/requirements.txt'],
+            commands: ['pip install ruff'],
           },
           build: {
             commands: [
               'ruff check app/',
               'ruff format --check app/',
-              'mypy app/',
+            ],
+          },
+        },
+      }),
+    });
+
+    const typecheckProject = new codebuild.PipelineProject(this, 'TypeCheckProject', {
+      description: 'mypy static type checking',
+      environment: { buildImage: codebuild.LinuxBuildImage.STANDARD_7_0 },
+      logging: { cloudWatch: { logGroup: typecheckLogGroup.logGroup, enabled: true } },
+      buildSpec: codebuild.BuildSpec.fromObject({
+        version: '0.2',
+        phases: {
+          install: {
+            'runtime-versions': { python: '3.12' },
+            commands: ['pip install mypy -r app/requirements.txt'],
+          },
+          build: {
+            commands: ['mypy app/'],
+          },
+        },
+      }),
+    });
+
+    const securityProject = new codebuild.PipelineProject(this, 'SecurityProject', {
+      description: 'bandit SAST + pip-audit dependency scan',
+      environment: { buildImage: codebuild.LinuxBuildImage.STANDARD_7_0 },
+      logging: { cloudWatch: { logGroup: securityLogGroup.logGroup, enabled: true } },
+      buildSpec: codebuild.BuildSpec.fromObject({
+        version: '0.2',
+        phases: {
+          install: {
+            'runtime-versions': { python: '3.12' },
+            commands: ['pip install bandit pip-audit -r app/requirements.txt'],
+          },
+          build: {
+            commands: [
               'bandit -r app/ -ll',
               'pip-audit -r app/requirements.txt',
             ],
@@ -240,9 +278,22 @@ export class PipelineStack extends cdk.Stack {
           stageName: 'QualityGate',
           actions: [
             new actions.CodeBuildAction({
-              actionName: 'Lint_TypeCheck_Scan',
-              project: qualityProject,
+              actionName: 'Lint',
+              project: lintProject,
               input: sourceOutput,
+              runOrder: 1,
+            }),
+            new actions.CodeBuildAction({
+              actionName: 'TypeCheck',
+              project: typecheckProject,
+              input: sourceOutput,
+              runOrder: 1,
+            }),
+            new actions.CodeBuildAction({
+              actionName: 'Security',
+              project: securityProject,
+              input: sourceOutput,
+              runOrder: 1,
             }),
           ],
         },

@@ -49,7 +49,9 @@ def require_authenticated_user(
     """
     user = _get_user(credentials.username)
 
-    if user is None or not _verify_password(credentials.password, user["password_hash"]):
+    if user is None or not _verify_password(
+        credentials.password, user["password_hash"]
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials.",
