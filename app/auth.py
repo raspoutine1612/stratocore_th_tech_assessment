@@ -6,19 +6,20 @@ The DynamoDB table name is injected at runtime via the DYNAMO_TABLE_NAME
 environment variable, set by the ECS task definition or Lambda configuration.
 """
 
-import os
-from typing import Any
-
 import bcrypt
 import boto3
+import os
+
+from typing import Any
+from botocore.exceptions import ClientError
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+
 
 # Dummy hash used when the username does not exist in DynamoDB.
 # bcrypt.checkpw is always called to prevent timing-based username enumeration:
 # without this, a missing user returns instantly while a wrong password takes ~100ms.
-_DUMMY_HASH = bcrypt.hashpw(b'dummy', bcrypt.gensalt()).decode()
-from botocore.exceptions import ClientError
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+_DUMMY_HASH = bcrypt.hashpw(b"dummy", bcrypt.gensalt()).decode()
 
 _security = HTTPBasic()
 

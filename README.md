@@ -6,35 +6,69 @@ A FastAPI application deployed on AWS using two compute strategies — container
 
 ## Architecture Overview
 
-```mermaid
-flowchart TD
-    Client([Client])
-    APIGW["API GW"]
+```plantuml
+@startuml
+skinparam defaultFontName Arial
+skinparam backgroundColor #FAFAFA
+skinparam ArrowColor #555555
+skinparam ArrowFontSize 11
+skinparam defaultTextAlignment center
 
-    subgraph VPC["VPC"]
-        ALB["ALB\nSG: inbound :80 public"]
-        subgraph Private["Private Subnets"]
-            ECS["ECS Fargate\nSG: inbound :8000 from ALB only"]
-            Lambda["Lambda\n(no inbound SG — managed by API GW)"]
-        end
-    end
+skinparam node {
+    BackgroundColor #DDEEFF
+    BorderColor #336699
+}
+skinparam rectangle {
+    BackgroundColor #F5F5F5
+    BorderColor #AAAAAA
+    RoundCorner 8
+}
+skinparam database {
+    BackgroundColor #FFF8DC
+    BorderColor #CC9900
+}
 
-    Client -->|"HTTP :80"| ALB -->|":8000"| ECS
-    Client -->|"HTTPS :443"| APIGW --> Lambda
+actor Client
 
-    subgraph Shared["Shared Resources"]
-        ECR[("ECR")]
-        S3[("S3 · KMS")]
-        Dynamo[("DynamoDB · KMS")]
-    end
+rectangle "VPC" {
+    node "ALB\n<size:10>SG: inbound :80 public</size>" as ALB
 
-    ECR -.->|"HTTPS :443"| ECS
-    ECR -.->|"HTTPS :443"| Lambda
+    rectangle "Private Subnets" {
+        together {
+            node "ECS Fargate\n<size:10>SG: inbound :8000 from ALB only</size>" as ECS
+            node "Lambda\n<size:10>no inbound SG — managed by API GW</size>" as Lambda
+        }
+    }
+}
 
-    ECS -->|"HTTPS :443 · VPC GW Endpoint"| S3
-    Lambda -->|"HTTPS :443 · VPC GW Endpoint"| S3
-    ECS -->|"HTTPS :443 · VPC GW Endpoint"| Dynamo
-    Lambda -->|"HTTPS :443 · VPC GW Endpoint"| Dynamo
+node "API GW\n<size:10>HTTPS</size>" as APIGW
+
+rectangle "Shared Resources" {
+    together {
+        database "DynamoDB · KMS" as Dynamo
+        database "S3 · KMS" as S3
+        database "ECR" as ECR
+    }
+}
+
+' ── ingress ──────────────────────────────────────────
+Client --> ALB   : HTTP :80
+Client --> APIGW : HTTPS :443
+
+' ── routing ──────────────────────────────────────────
+ALB   --> ECS    : :8000
+APIGW --> Lambda
+
+' ── data plane (VPC Gateway Endpoint) ────────────────
+ECS    --> Dynamo : HTTPS :443\nVPC GW Endpoint
+ECS    --> S3     : HTTPS :443\nVPC GW Endpoint
+Lambda --> Dynamo : HTTPS :443\nVPC GW Endpoint
+Lambda --> S3     : HTTPS :443\nVPC GW Endpoint
+
+' ── image pull (dashed) ───────────────────────────────
+ECR ..> ECS    : pull HTTPS :443
+ECR ..> Lambda : pull HTTPS :443
+@enduml
 ```
 
 Both targets run the **same Docker image**. ECS runs it with `uvicorn` (overridden via the task definition `command`). Lambda runs it with `awslambdaric` as the entrypoint and `main.handler` (Mangum) as the handler.
