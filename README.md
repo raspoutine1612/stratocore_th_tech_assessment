@@ -12,10 +12,10 @@ flowchart TD
     APIGW["API Gateway"]
 
     subgraph VPC["VPC"]
-        ALB[ALB]
+        ALB["ALB\nSG: inbound :80 public"]
         subgraph Private["Private Subnets"]
-            ECS["ECS Fargate"]
-            Lambda[Lambda]
+            ECS["ECS Fargate\nSG: inbound :8000 from ALB only"]
+            Lambda["Lambda\n(no inbound SG — managed by API GW)"]
         end
     end
 
@@ -25,13 +25,16 @@ flowchart TD
         Dynamo[("DynamoDB · KMS")]
     end
 
-    Client -->|HTTP| ALB --> ECS
-    Client -->|HTTPS| APIGW --> Lambda
+    Client -->|"HTTP :80"| ALB -->|":8000"| ECS
+    Client -->|"HTTPS :443"| APIGW --> Lambda
 
-    ECR -.->|pull| ECS & Lambda
+    ECR -.->|"HTTPS :443"| ECS
+    ECR -.->|"HTTPS :443"| Lambda
 
-    ECS & Lambda --> S3
-    ECS & Lambda --> Dynamo
+    ECS -->|"HTTPS :443 · VPC Gateway Endpoint"| S3
+    Lambda -->|"HTTPS :443 · VPC Gateway Endpoint"| S3
+    ECS -->|"HTTPS :443 · VPC Gateway Endpoint"| Dynamo
+    Lambda -->|"HTTPS :443 · VPC Gateway Endpoint"| Dynamo
 ```
 
 Both targets run the **same Docker image**. ECS runs it with `uvicorn` (overridden via the task definition `command`). Lambda runs it with `awslambdaric` as the entrypoint and `main.handler` (Mangum) as the handler.
