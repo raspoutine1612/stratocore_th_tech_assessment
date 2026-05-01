@@ -72,7 +72,9 @@ export class LambdaFunction extends Construct {
       timeout: props.timeout ?? cdk.Duration.seconds(29),
       environment: props.environment,
       vpc: props.vpc,
-      vpcSubnets: props.vpcSubnets ?? (props.vpc ? { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS } : undefined),
+      vpcSubnets: props.vpcSubnets ?? (props.vpc
+        ? { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }
+        : undefined),
     });
   }
 }

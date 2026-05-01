@@ -21,11 +21,6 @@ import { SharedStack } from '../lib/stacks/shared-stack';
  *
  * APP_VERSION is injected by GitHub Actions (git tag or SHA).
  * Locally it defaults to "local".
- * Before deploying NetworkStack, store the ACM certificate ARN in SSM:
- *   aws ssm put-parameter \
- *     --name /file-api/certificate-arn \
- *     --value "arn:aws:acm:REGION:ACCOUNT:certificate/ID" \
- *     --type String
  */
 
 const app = new cdk.App();

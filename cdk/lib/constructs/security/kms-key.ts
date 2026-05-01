@@ -14,16 +14,10 @@ export interface KmsKeyProps {
 }
 
 /**
- * A KMS key with automatic annual rotation and a mandatory admin policy.
+ * A KMS key with annual rotation and two mandatory resource policy statements:
  *
- * Two statements are always added to the key resource policy:
- *
- * 1. Root admin — allows the account root principal to perform any KMS action.
- *    Without this, removing all grants makes the key permanently unusable.
- *
- * 2. IAM delegation — allows IAM identity policies in the same account to grant
- *    access to the key. This is what makes CDK's bucket.grant() and table.grant()
- *    work without adding explicit key policy entries for every grantee.
+ * 1. Root admin — without this, losing all grants makes the key permanently unusable.
+ * 2. IAM delegation — lets identity policies grant key access; needed for bucket.grant() and table.grant().
  */
 export class KmsKey extends Construct {
   /** The underlying CDK KMS key. Pass this to storage or observability constructs. */
@@ -38,9 +32,7 @@ export class KmsKey extends Construct {
       removalPolicy: props.removalPolicy ?? cdk.RemovalPolicy.RETAIN,
     });
 
-    // Statement 1 — root admin.
-    // Grants the account root full KMS access so the key can always be managed,
-    // even if all other grants and policies are accidentally removed.
+    // Root admin — full access so the key can always be recovered.
     this.key.addToResourcePolicy(
       new iam.PolicyStatement({
         principals: [new iam.AccountRootPrincipal()],
@@ -49,9 +41,7 @@ export class KmsKey extends Construct {
       }),
     );
 
-    // Statement 2 — IAM delegation.
-    // Allows IAM identity policies (attached to roles, users, groups) in this account
-    // to grant access to the key. Without this, only key resource policy entries work.
+    // IAM delegation — lets identity policies grant key access; needed for bucket.grant() and table.grant().
     this.key.addToResourcePolicy(
       new iam.PolicyStatement({
         principals: [new iam.AccountPrincipal(cdk.Stack.of(this).account)],
@@ -70,12 +60,10 @@ export class KmsKey extends Construct {
   }
 
   /**
-   * Allow the CloudWatch Logs service to use this key for log group encryption.
+   * Allow CloudWatch Logs to use this key.
    *
-   * CloudWatch Logs requires an explicit resource policy on the KMS key — it cannot
-   * use a key via IAM delegation alone. Call this before passing the key to a LogGroup.
-   *
-   * The condition scopes the grant to log groups in the same account and region.
+   * CWL can't use IAM delegation — it needs an explicit key resource policy.
+   * The condition scopes the grant to this account and region.
    */
   public grantCloudWatchLogs(region: string, account: string): void {
     this.key.addToResourcePolicy(

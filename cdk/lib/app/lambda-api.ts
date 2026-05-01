@@ -30,18 +30,9 @@ export interface LambdaApiProps {
 }
 
 /**
- * The serverless compute target for stratocore — Lambda + API Gateway HTTP API.
+ * Serverless compute target — Lambda + API Gateway HTTP API.
  *
- * Creates:
- *  - KMS key + CloudWatch log group for Lambda logs
- *  - Execution role with scoped S3, DynamoDB, and ECR grants
- *  - Lambda DockerImageFunction (same ECR image as ECS, adapted by Mangum)
- *  - API Gateway HTTP API with a default $default route → Lambda integration
- *
- * API Gateway HTTP API is used over REST API because:
- *  - Lower latency and cost
- *  - Simpler configuration for a proxy-style integration
- *  - Native HTTPS endpoint with no additional configuration
+ * HTTP API over REST API: lower latency, lower cost, native HTTPS, simpler proxy config.
  */
 export class LambdaApi extends Construct {
   /** The HTTPS URL of the API Gateway endpoint. */
@@ -65,9 +56,7 @@ export class LambdaApi extends Construct {
       removalPolicy: props.removalPolicy,
     });
 
-    // Lambda execution role — grants the function permission to run and access resources.
-    // AWSLambdaBasicExecutionRole is the minimum needed to write logs.
-    // AWSLambdaVPCAccessExecutionRole is added when the function runs in a VPC.
+    // VPCAccessExecutionRole is only needed when the function runs inside a VPC.
     const managedPolicies = [
       iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole'),
     ];
@@ -90,7 +79,6 @@ export class LambdaApi extends Construct {
       tableKmsKeyArn: props.tableKmsKeyArn,
     });
 
-    // Grant the execution role permission to pull the container image from ECR.
     props.ecrRepository.grantPull(executionRole.role);
 
     const lambdaFn = new LambdaFunction(this, 'Function', {
@@ -105,9 +93,7 @@ export class LambdaApi extends Construct {
       vpc: props.vpc,
     });
 
-    // API Gateway HTTP API — the simplest way to expose Lambda over HTTPS.
-    // The $default route catches all methods and paths and forwards to Lambda.
-    // This mirrors how App Runner proxied all traffic to the container.
+    // $default route catches all methods and paths.
     const httpApi = new apigatewayv2.HttpApi(this, 'HttpApi', {
       apiName: 'file-api-lambda',
       defaultIntegration: new integrations.HttpLambdaIntegration(

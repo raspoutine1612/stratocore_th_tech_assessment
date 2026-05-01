@@ -1,10 +1,4 @@
-"""
-S3 storage module.
-
-All file paths are scoped to the authenticated user: files/{username}/{filename}.
-The bucket name is injected at runtime via the S3_BUCKET_NAME environment variable,
-set by the ECS task definition or Lambda configuration.
-"""
+"""S3 storage. All keys are scoped to the authenticated user: files/{username}/{filename}."""
 
 import os
 
@@ -17,12 +11,12 @@ _bucket = os.environ["S3_BUCKET_NAME"]
 
 
 def _object_key(username: str, filename: str) -> str:
-    """Build the S3 object key for a given user and filename."""
+    """Return the S3 key for a user's file."""
     return f"files/{username}/{filename}"
 
 
 def upload_file(username: str, filename: str, content: bytes) -> None:
-    """Upload file content to S3 under the authenticated user's prefix."""
+    """Write content to S3 under the user's prefix."""
     try:
         _s3.put_object(
             Bucket=_bucket,
@@ -38,15 +32,13 @@ def upload_file(username: str, filename: str, content: bytes) -> None:
 
 def list_files(username: str) -> list[str]:
     """
-    List all filenames stored under the authenticated user's prefix.
+    Return all filenames under the user's prefix.
 
-    Paginates through all S3 results — list_objects_v2 returns at most 1000
-    objects per call, so we follow NextContinuationToken until exhausted.
-    Returns filenames only, not full S3 keys.
+    Paginates via NextContinuationToken — list_objects_v2 caps at 1000 per call.
     """
     prefix = f"files/{username}/"
     filenames: list[str] = []
-    kwargs: dict = {"Bucket": _bucket, "Prefix": prefix}
+    kwargs: dict[str, str] = {"Bucket": _bucket, "Prefix": prefix}
 
     while True:
         try:
@@ -68,15 +60,10 @@ def list_files(username: str) -> list[str]:
 
 
 def delete_file(username: str, filename: str) -> None:
-    """
-    Delete a file belonging to the authenticated user.
-
-    Raises HTTP 404 if the file does not exist.
-    """
+    """Delete a user's file. Raises HTTP 404 if it doesn't exist."""
     key = _object_key(username, filename)
 
-    # S3 DeleteObject is idempotent — it succeeds even if the key does not exist.
-    # We check existence first so we can return a meaningful 404.
+    # S3 delete is idempotent — head first so we can return a 404 rather than silently succeed.
     try:
         _s3.head_object(Bucket=_bucket, Key=key)
     except ClientError as error:

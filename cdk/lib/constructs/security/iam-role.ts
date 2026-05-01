@@ -15,19 +15,10 @@ export interface IamRoleProps {
 }
 
 /**
- * An IAM role with a hardened trust policy.
+ * An IAM role with a confused-deputy deny in the trust policy.
  *
- * Two statements are always written to the trust policy:
- *
- * 1. Allow — the intended service principal can assume this role (from props.assumedBy).
- *
- * 2. Deny — any principal whose aws:SourceAccount differs from the current account
- *    is blocked from assuming this role. This prevents confused-deputy attacks where
- *    an AWS service acting on behalf of a different account could assume our role.
- *
- *    aws:SourceAccount is the account that owns the resource triggering the service call
- *    (e.g. the account owning the ECS task or App Runner service). When the key is absent
- *    (direct IAM assume-role), StringNotEquals evaluates to false and the deny does not fire.
+ * The deny blocks any principal whose aws:SourceAccount differs from this account.
+ * StringNotEquals on a missing key is false, so direct IAM assume-role is not affected.
  */
 export class IamRole extends Construct {
   /** The underlying CDK role. Pass to compute and pipeline constructs. */
@@ -42,9 +33,6 @@ export class IamRole extends Construct {
       managedPolicies: props.managedPolicies ?? [],
     });
 
-    // Deny any principal whose source account differs from this one.
-    // StringNotEquals on a missing key returns false, so direct IAM principals
-    // (where aws:SourceAccount is absent) are not affected by this deny.
     this.role.assumeRolePolicy?.addStatements(
       new iam.PolicyStatement({
         effect: iam.Effect.DENY,

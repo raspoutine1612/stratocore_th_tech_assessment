@@ -2,11 +2,11 @@ import * as cdk from 'aws-cdk-lib';
 import * as codebuild from 'aws-cdk-lib/aws-codebuild';
 import * as codepipeline from 'aws-cdk-lib/aws-codepipeline';
 import * as actions from 'aws-cdk-lib/aws-codepipeline-actions';
-import * as iam from 'aws-cdk-lib/aws-iam';
-import * as logs from 'aws-cdk-lib/aws-logs';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { Construct } from 'constructs';
 import { PROJECT_PREFIX } from '../constants';
+import { BuildProject } from '../constructs/pipeline/build-project';
+import { DeployProject } from '../constructs/pipeline/deploy-project';
 import { LogGroup } from '../constructs/observability/log-group';
 import { KmsKey } from '../constructs/security/kms-key';
 
@@ -14,11 +14,12 @@ import { KmsKey } from '../constructs/security/kms-key';
  * PipelineStack — AWS CodePipeline CI/CD.
  *
  * Stages:
- *  1. Source  — GitHub via CodeStar Connection (managed by this stack).
- *  2. Build   — CodeBuild: docker build + push to ECR (latest + short SHA tags).
- *  3. Deploy  — CodeBuild: rolling ECS update + Lambda function code update.
+ *  1. Source      — GitHub via CodeStar Connection.
+ *  2. QualityGate — ruff, mypy, bandit, pip-audit (parallel).
+ *  3. Build       — Docker build + ECR push (latest + short SHA tags).
+ *  4. Deploy      — Rolling ECS update + Lambda image update.
  *
- * Required context (set in cdk.json):
+ * Required context (set in cdk.json or via --context):
  *  githubOwner           — GitHub username or org
  *  githubRepo            — repository name
  *  githubConnectionArn   — ARN of an AVAILABLE AWS CodeConnections connection
@@ -46,7 +47,6 @@ export class PipelineStack extends cdk.Stack {
       return;
     }
 
-    // Publish the connection ARN to SSM so other stacks can reference it.
     new ssm.StringParameter(this, 'GitHubConnectionArn', {
       parameterName: `/${PROJECT_PREFIX}/github-connection-arn`,
       stringValue: connectionArn,
@@ -63,17 +63,9 @@ export class PipelineStack extends cdk.Stack {
 
     const sourceOutput = new codepipeline.Artifact('Source');
 
-    // One KMS key shared by both pipeline log groups.
+    // One KMS key for all pipeline log groups.
     const logKey = new KmsKey(this, 'PipelineLogKey', {
       description: 'Encrypts CodeBuild pipeline logs in CloudWatch',
-    });
-    const buildLogGroup = new LogGroup(this, 'BuildLogGroup', {
-      logGroupName: '/file-api/pipeline/build',
-      encryptionKey: logKey,
-    });
-    const deployLogGroup = new LogGroup(this, 'DeployLogGroup', {
-      logGroupName: '/file-api/pipeline/deploy',
-      encryptionKey: logKey,
     });
     const lintLogGroup = new LogGroup(this, 'LintLogGroup', {
       logGroupName: '/file-api/pipeline/quality/lint',
@@ -85,6 +77,14 @@ export class PipelineStack extends cdk.Stack {
     });
     const securityLogGroup = new LogGroup(this, 'SecurityLogGroup', {
       logGroupName: '/file-api/pipeline/quality/security',
+      encryptionKey: logKey,
+    });
+    const buildLogGroup = new LogGroup(this, 'BuildLogGroup', {
+      logGroupName: '/file-api/pipeline/build',
+      encryptionKey: logKey,
+    });
+    const deployLogGroup = new LogGroup(this, 'DeployLogGroup', {
+      logGroupName: '/file-api/pipeline/deploy',
       encryptionKey: logKey,
     });
 
@@ -101,10 +101,7 @@ export class PipelineStack extends cdk.Stack {
             commands: ['pip install ruff'],
           },
           build: {
-            commands: [
-              'ruff check app/',
-              'ruff format --check app/',
-            ],
+            commands: ['ruff check app/', 'ruff format --check app/'],
           },
         },
       }),
@@ -121,9 +118,7 @@ export class PipelineStack extends cdk.Stack {
             'runtime-versions': { python: '3.12' },
             commands: ['pip install mypy -r app/requirements.txt'],
           },
-          build: {
-            commands: ['mypy app/'],
-          },
+          build: { commands: ['mypy app/'] },
         },
       }),
     });
@@ -140,132 +135,31 @@ export class PipelineStack extends cdk.Stack {
             commands: ['pip install bandit pip-audit -r app/requirements.txt'],
           },
           build: {
-            commands: [
-              'bandit -r app/ -ll',
-              'pip-audit -r app/requirements.txt',
-            ],
+            commands: ['bandit -r app/ -ll', 'pip-audit -r app/requirements.txt'],
           },
         },
       }),
     });
 
-    // Stage 2 — build Docker image and push to ECR.
-    const buildProject = new codebuild.PipelineProject(this, 'BuildProject', {
-      description: 'Builds and pushes the Docker image to ECR',
-      environment: {
-        buildImage: codebuild.LinuxBuildImage.STANDARD_7_0,
-        privileged: true, // Docker daemon requires privileged mode in CodeBuild.
-      },
-      environmentVariables: {
-        ECR_REPO_URI: { value: ecrRepoUri },
-      },
-      logging: {
-        cloudWatch: {
-          logGroup: buildLogGroup.logGroup,
-          prefix: 'build',
-          enabled: true,
-        },
-      },
-      buildSpec: codebuild.BuildSpec.fromObject({
-        version: '0.2',
-        phases: {
-          pre_build: {
-            commands: [
-              'aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REPO_URI',
-              'IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c1-7)',
-            ],
-          },
-          build: {
-            commands: [
-              'docker build -t $ECR_REPO_URI:$IMAGE_TAG -t $ECR_REPO_URI:latest ./app',
-            ],
-          },
-          post_build: {
-            commands: [
-              'docker push $ECR_REPO_URI:$IMAGE_TAG',
-              'docker push $ECR_REPO_URI:latest',
-            ],
-          },
-        },
-      }),
+    const buildProject = new BuildProject(this, 'BuildProject', {
+      logGroup: buildLogGroup.logGroup,
+      ecrRepoUri,
     });
+    buildProject.grantEcrPush(ecrRepoArn);
 
-    // ecr:GetAuthorizationToken has no resource-level restriction — * is required by AWS.
-    buildProject.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['ecr:GetAuthorizationToken'],
-      resources: ['*'],
-    }));
-    buildProject.addToRolePolicy(new iam.PolicyStatement({
-      actions: [
-        'ecr:BatchCheckLayerAvailability',
-        'ecr:CompleteLayerUpload',
-        'ecr:InitiateLayerUpload',
-        'ecr:PutImage',
-        'ecr:UploadLayerPart',
-      ],
-      resources: [ecrRepoArn],
-    }));
-
-    // Stage 3 — trigger rolling ECS update and Lambda function code update.
-    const deployProject = new codebuild.PipelineProject(this, 'DeployProject', {
-      description: 'Triggers ECS rolling update and Lambda function code update',
-      logging: {
-        cloudWatch: {
-          logGroup: deployLogGroup.logGroup,
-          prefix: 'deploy',
-          enabled: true,
-        },
-      },
-      environment: {
-        buildImage: codebuild.LinuxBuildImage.STANDARD_7_0,
-      },
-      environmentVariables: {
-        ECS_CLUSTER: { value: ecsClusterName },
-        ECS_SERVICE: { value: ecsServiceName },
-        LAMBDA_FUNCTION_NAME: { value: lambdaFunctionName },
-        ECR_REPO_URI: { value: ecrRepoUri },
-      },
-      buildSpec: codebuild.BuildSpec.fromObject({
-        version: '0.2',
-        phases: {
-          build: {
-            commands: [
-              // Update ECS service — forces a new task deployment with the latest image.
-              // Wait for the new tasks to be healthy before continuing.
-              'aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --force-new-deployment',
-              'aws ecs wait services-stable --cluster $ECS_CLUSTER --services $ECS_SERVICE',
-              // Update Lambda function image — points the function to the newly pushed image.
-              'aws lambda update-function-code --function-name $LAMBDA_FUNCTION_NAME --image-uri $ECR_REPO_URI:latest',
-            ],
-          },
-        },
-      }),
+    const deployProject = new DeployProject(this, 'DeployProject', {
+      logGroup: deployLogGroup.logGroup,
+      ecsClusterName,
+      ecsServiceName,
+      lambdaFunctionName,
+      ecrRepoUri,
     });
-
-    deployProject.addToRolePolicy(new iam.PolicyStatement({
-      // ecs:DescribeServices is required by `aws ecs wait services-stable`.
-      actions: ['ecs:UpdateService', 'ecs:DescribeServices'],
-      resources: [
-        `arn:aws:ecs:${this.region}:${this.account}:service/${ecsClusterName}/${ecsServiceName}`,
-      ],
-    }));
-    deployProject.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['lambda:UpdateFunctionCode'],
-      resources: [
-        `arn:aws:lambda:${this.region}:${this.account}:function:${lambdaFunctionName}`,
-      ],
-    }));
-
-    const sourceAction = new actions.CodeStarConnectionsSourceAction({
-      actionName: 'GitHub',
-      owner: githubOwner,
-      repo: githubRepo,
-      branch: githubBranch,
-      connectionArn,
-      output: sourceOutput,
-      // triggerOnPush defaults to true. For V2 pipelines this creates a webhook-based
-      // trigger (not polling). Do not set it to false — that breaks the trigger.
-    });
+    deployProject.grantEcsDeploy(
+      `arn:aws:ecs:${this.region}:${this.account}:service/${ecsClusterName}/${ecsServiceName}`,
+    );
+    deployProject.grantLambdaDeploy(
+      `arn:aws:lambda:${this.region}:${this.account}:function:${lambdaFunctionName}`,
+    );
 
     // PipelineType.V2 uses webhook-based triggers instead of polling.
     new codepipeline.Pipeline(this, 'Pipeline', {
@@ -274,7 +168,17 @@ export class PipelineStack extends cdk.Stack {
       stages: [
         {
           stageName: 'Source',
-          actions: [sourceAction],
+          actions: [
+            new actions.CodeStarConnectionsSourceAction({
+              actionName: 'GitHub',
+              owner: githubOwner,
+              repo: githubRepo,
+              branch: githubBranch,
+              connectionArn,
+              output: sourceOutput,
+              // triggerOnPush defaults to true — creates a webhook, not polling.
+            }),
+          ],
         },
         {
           stageName: 'QualityGate',
@@ -304,7 +208,7 @@ export class PipelineStack extends cdk.Stack {
           actions: [
             new actions.CodeBuildAction({
               actionName: 'BuildAndPush',
-              project: buildProject,
+              project: buildProject.project,
               input: sourceOutput,
             }),
           ],
@@ -313,8 +217,8 @@ export class PipelineStack extends cdk.Stack {
           stageName: 'Deploy',
           actions: [
             new actions.CodeBuildAction({
-              actionName: 'DeployToEcsAndAppRunner',
-              project: deployProject,
+              actionName: 'DeployToEcsAndLambda',
+              project: deployProject.project,
               input: sourceOutput,
             }),
           ],
