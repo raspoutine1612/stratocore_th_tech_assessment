@@ -11,6 +11,11 @@ from typing import Any
 
 import bcrypt
 import boto3
+
+# Dummy hash used when the username does not exist in DynamoDB.
+# bcrypt.checkpw is always called to prevent timing-based username enumeration:
+# without this, a missing user returns instantly while a wrong password takes ~100ms.
+_DUMMY_HASH = bcrypt.hashpw(b'dummy', bcrypt.gensalt()).decode()
 from botocore.exceptions import ClientError
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -51,9 +56,12 @@ def require_authenticated_user(
     """
     user = _get_user(credentials.username)
 
-    if user is None or not _verify_password(
-        credentials.password, user["password_hash"]
-    ):
+    # Always run bcrypt — even when the user does not exist — to prevent
+    # timing-based username enumeration. A dummy hash is used in that case.
+    stored_hash = user["password_hash"] if user is not None else _DUMMY_HASH
+    password_valid = _verify_password(credentials.password, stored_hash)
+
+    if user is None or not password_valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials.",

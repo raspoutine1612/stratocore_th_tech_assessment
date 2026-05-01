@@ -1,4 +1,5 @@
 import * as cdk from 'aws-cdk-lib';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { Construct } from 'constructs';
@@ -17,6 +18,11 @@ export class LambdaStack extends cdk.Stack {
     super(scope, id, props);
 
     const p = `/${PROJECT_PREFIX}`;
+
+    // VPC lookup requires a synth-time value — valueFromLookup queries SSM during cdk synth.
+    // This is the same pattern used by EcsStack.
+    const vpcId = ssm.StringParameter.valueFromLookup(this, `${p}/vpc-id`);
+    const vpc = ec2.Vpc.fromLookup(this, 'Vpc', { vpcId });
 
     const bucketName = ssm.StringParameter.valueForStringParameter(this, `${p}/bucket-name`);
     const bucketArn = ssm.StringParameter.valueForStringParameter(this, `${p}/bucket-arn`);
@@ -42,6 +48,9 @@ export class LambdaStack extends cdk.Stack {
       tableName,
       tableArn,
       tableKmsKeyArn,
+      // Run Lambda in the same private subnets as ECS — traffic to S3 and DynamoDB
+      // routes through the VPC Gateway Endpoints at no extra cost (no NAT hop).
+      vpc,
     });
 
     // Lambda function name is used by the pipeline to update the image after each build.

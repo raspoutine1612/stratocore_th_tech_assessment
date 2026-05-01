@@ -18,8 +18,9 @@ app = FastAPI(title="stratocore")
 # Maximum upload size — prevents abuse and stays within Lambda's 6 MB payload limit.
 _MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
-# Allowed filename characters — prevents path traversal attacks.
-_FILENAME_RE = re.compile(r"^[\w.\-]+$")
+# Allowed filename characters — ASCII only to prevent path traversal and S3 key issues.
+# \w would match Unicode letters, which is unpredictable in S3 key handling.
+_FILENAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 @app.get("/health")

@@ -1,15 +1,13 @@
 import * as cdk from 'aws-cdk-lib';
-import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as kms from 'aws-cdk-lib/aws-kms';
-import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 import { EcsFargate } from '../constructs/compute/ecs-fargate';
 import { LogGroup } from '../constructs/observability/log-group';
 import { IamRole } from '../constructs/security/iam-role';
 import { KmsKey } from '../constructs/security/kms-key';
+import { grantStorageAccess } from './storage-grants';
 
 export interface EcsApiProps {
   readonly vpc: ec2.IVpc;
@@ -65,33 +63,14 @@ export class EcsApi extends Construct {
     });
 
     // fromBucketAttributes returns IBucket which has no grant() method.
-    // iam.Grant.addToPrincipal lets us specify exact actions without wildcards.
-    const bucketKey = kms.Key.fromKeyArn(this, 'BucketKey', props.bucketKmsKeyArn);
-    const bucket = s3.Bucket.fromBucketAttributes(this, 'Bucket', {
+    // fromTableAttributes returns ITable with limited grant() — and both use SSM tokens.
+    // grantStorageAccess centralises all S3 + DynamoDB + KMS grants for both compute targets.
+    grantStorageAccess(this, taskRole.role, {
       bucketArn: props.bucketArn,
-      encryptionKey: bucketKey,
-    });
-
-    iam.Grant.addToPrincipal({
-      grantee: taskRole.role,
-      actions: ['s3:PutObject', 's3:GetObject', 's3:DeleteObject'],
-      resourceArns: [`${props.bucketArn}/*`],
-    });
-    iam.Grant.addToPrincipal({
-      grantee: taskRole.role,
-      actions: ['s3:ListBucket'],
-      resourceArns: [props.bucketArn],
-    });
-    bucketKey.grantEncryptDecrypt(taskRole.role);
-
-    // ITable has grant() — no cast needed.
-    const tableKey = kms.Key.fromKeyArn(this, 'TableKey', props.tableKmsKeyArn);
-    const table = dynamodb.Table.fromTableAttributes(this, 'Table', {
+      bucketKmsKeyArn: props.bucketKmsKeyArn,
       tableArn: props.tableArn,
-      encryptionKey: tableKey,
+      tableKmsKeyArn: props.tableKmsKeyArn,
     });
-    table.grant(taskRole.role, 'dynamodb:GetItem');
-    tableKey.grantDecrypt(taskRole.role);
 
     this.fargate = new EcsFargate(this, 'Fargate', {
       vpc: props.vpc,

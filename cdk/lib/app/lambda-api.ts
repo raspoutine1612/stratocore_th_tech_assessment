@@ -1,17 +1,15 @@
 import * as cdk from 'aws-cdk-lib';
 import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
-import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as kms from 'aws-cdk-lib/aws-kms';
-import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 import { LambdaFunction } from '../constructs/compute/lambda-function';
 import { LogGroup } from '../constructs/observability/log-group';
 import { IamRole } from '../constructs/security/iam-role';
 import { KmsKey } from '../constructs/security/kms-key';
+import { grantStorageAccess } from './storage-grants';
 
 export interface LambdaApiProps {
   /** ECR repository that holds the container image. */
@@ -85,33 +83,12 @@ export class LambdaApi extends Construct {
       managedPolicies,
     });
 
-    // fromBucketAttributes returns IBucket — use iam.Grant for exact action scoping.
-    const bucketKey = kms.Key.fromKeyArn(this, 'BucketKey', props.bucketKmsKeyArn);
-    s3.Bucket.fromBucketAttributes(this, 'Bucket', {
+    grantStorageAccess(this, executionRole.role, {
       bucketArn: props.bucketArn,
-      encryptionKey: bucketKey,
-    });
-
-    iam.Grant.addToPrincipal({
-      grantee: executionRole.role,
-      actions: ['s3:PutObject', 's3:GetObject', 's3:DeleteObject'],
-      resourceArns: [`${props.bucketArn}/*`],
-    });
-    iam.Grant.addToPrincipal({
-      grantee: executionRole.role,
-      actions: ['s3:ListBucket'],
-      resourceArns: [props.bucketArn],
-    });
-    bucketKey.grantEncryptDecrypt(executionRole.role);
-
-    // ITable has grant() — no cast needed.
-    const tableKey = kms.Key.fromKeyArn(this, 'TableKey', props.tableKmsKeyArn);
-    const table = dynamodb.Table.fromTableAttributes(this, 'Table', {
+      bucketKmsKeyArn: props.bucketKmsKeyArn,
       tableArn: props.tableArn,
-      encryptionKey: tableKey,
+      tableKmsKeyArn: props.tableKmsKeyArn,
     });
-    table.grant(executionRole.role, 'dynamodb:GetItem');
-    tableKey.grantDecrypt(executionRole.role);
 
     // Grant the execution role permission to pull the container image from ECR.
     props.ecrRepository.grantPull(executionRole.role);
