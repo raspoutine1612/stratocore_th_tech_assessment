@@ -19,14 +19,14 @@ flowchart TD
         end
     end
 
+    Client -->|"HTTP :80"| ALB -->|":8000"| ECS
+    Client -->|"HTTPS :443"| APIGW --> Lambda
+
     subgraph Shared["Shared Resources"]
         ECR[("ECR")]
         S3[("S3 · KMS")]
         Dynamo[("DynamoDB · KMS")]
     end
-
-    Client -->|"HTTP :80"| ALB -->|":8000"| ECS
-    Client -->|"HTTPS :443"| APIGW --> Lambda
 
     ECR -.->|"HTTPS :443"| ECS
     ECR -.->|"HTTPS :443"| Lambda
