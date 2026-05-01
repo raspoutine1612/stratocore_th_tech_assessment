@@ -9,7 +9,7 @@ A FastAPI application deployed on AWS using two compute strategies — container
 ```mermaid
 flowchart TD
     Client([Client])
-    APIGW["API Gateway"]
+    APIGW["API GW"]
 
     subgraph VPC["VPC"]
         ALB["ALB\nSG: inbound :80 public"]
@@ -31,10 +31,10 @@ flowchart TD
     ECR -.->|"HTTPS :443"| ECS
     ECR -.->|"HTTPS :443"| Lambda
 
-    ECS -->|"HTTPS :443 · VPC Gateway Endpoint"| S3
-    Lambda -->|"HTTPS :443 · VPC Gateway Endpoint"| S3
-    ECS -->|"HTTPS :443 · VPC Gateway Endpoint"| Dynamo
-    Lambda -->|"HTTPS :443 · VPC Gateway Endpoint"| Dynamo
+    ECS -->|"HTTPS :443 · VPC GW Endpoint"| S3
+    Lambda -->|"HTTPS :443 · VPC GW Endpoint"| S3
+    ECS -->|"HTTPS :443 · VPC GW Endpoint"| Dynamo
+    Lambda -->|"HTTPS :443 · VPC GW Endpoint"| Dynamo
 ```
 
 Both targets run the **same Docker image**. ECS runs it with `uvicorn` (overridden via the task definition `command`). Lambda runs it with `awslambdaric` as the entrypoint and `main.handler` (Mangum) as the handler.
