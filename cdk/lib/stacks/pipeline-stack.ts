@@ -2,30 +2,34 @@ import * as cdk from 'aws-cdk-lib';
 import * as codebuild from 'aws-cdk-lib/aws-codebuild';
 import * as codepipeline from 'aws-cdk-lib/aws-codepipeline';
 import * as actions from 'aws-cdk-lib/aws-codepipeline-actions';
+import * as codestarconnections from 'aws-cdk-lib/aws-codestarconnections';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { Construct } from 'constructs';
 import { PROJECT_PREFIX } from '../constants';
+import { LogGroup } from '../constructs/observability/log-group';
+import { KmsKey } from '../constructs/security/kms-key';
 
 /**
  * PipelineStack — AWS CodePipeline CI/CD.
  *
  * Stages:
- *  1. Source  — GitHub via CodeStar Connection (created once manually in the console).
+ *  1. Source  — GitHub via CodeStar Connection (managed by this stack).
  *  2. Build   — CodeBuild: docker build + push to ECR (latest + short SHA tags).
  *  3. Deploy  — CodeBuild: rolling ECS update + App Runner deployment trigger.
  *
  * Required context:
  *  --context githubOwner=<owner>
  *  --context githubRepo=<repo>
- *  --context githubConnectionArn=arn:aws:codestar-connections:...
  *
  * Optional context:
  *  --context githubBranch=<branch>   (default: main)
  *
- * One-time setup before deploying this stack:
- *  AWS Console → Developer Tools → Connections → Create connection → GitHub
- *  Authorize the connection, then copy the ARN.
+ * One-time manual step after first deploy:
+ *  AWS Console → Developer Tools → Connections → find 'file-api-github'
+ *  → click 'Update pending connection' → authorize the GitHub OAuth app.
+ *  The pipeline will not trigger until the connection is in AVAILABLE state.
  */
 export class PipelineStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -34,13 +38,30 @@ export class PipelineStack extends cdk.Stack {
     const githubOwner = this.node.tryGetContext('githubOwner') as string;
     const githubRepo = this.node.tryGetContext('githubRepo') as string;
     const githubBranch = (this.node.tryGetContext('githubBranch') as string) ?? 'main';
-    const connectionArn = this.node.tryGetContext('githubConnectionArn') as string;
 
-    if (!githubOwner || !githubRepo || !connectionArn) {
-      throw new Error(
-        'Missing context. Pass: --context githubOwner=X --context githubRepo=X --context githubConnectionArn=X',
+    if (!githubOwner || !githubRepo) {
+      // Annotations.addError defers the failure to this stack's own synthesis,
+      // so other stacks can still be deployed without passing GitHub context.
+      cdk.Annotations.of(this).addError(
+        'Missing context. Pass: --context githubOwner=X --context githubRepo=X',
       );
+      return;
     }
+
+    // CDK creates the connection resource, but it starts in PENDING state.
+    // After deploying, go to AWS Console → Developer Tools → Connections
+    // → 'file-api-github' → 'Update pending connection' → authorize GitHub.
+    const connection = new codestarconnections.CfnConnection(this, 'GitHubConnection', {
+      connectionName: `${PROJECT_PREFIX}-github`,
+      providerType: 'GitHub',
+    });
+    const connectionArn = connection.attrConnectionArn;
+
+    new ssm.StringParameter(this, 'GitHubConnectionArn', {
+      parameterName: `/${PROJECT_PREFIX}/github-connection-arn`,
+      stringValue: connectionArn,
+      description: 'CodeStar connection ARN for GitHub — must be authorized in the console after first deploy',
+    });
 
     const p = `/${PROJECT_PREFIX}`;
 
@@ -53,6 +74,19 @@ export class PipelineStack extends cdk.Stack {
     const sourceOutput = new codepipeline.Artifact('Source');
     const buildOutput = new codepipeline.Artifact('Build');
 
+    // One KMS key shared by both pipeline log groups.
+    const logKey = new KmsKey(this, 'PipelineLogKey', {
+      description: 'Encrypts CodeBuild pipeline logs in CloudWatch',
+    });
+    const buildLogGroup = new LogGroup(this, 'BuildLogGroup', {
+      logGroupName: '/file-api/pipeline/build',
+      encryptionKey: logKey,
+    });
+    const deployLogGroup = new LogGroup(this, 'DeployLogGroup', {
+      logGroupName: '/file-api/pipeline/deploy',
+      encryptionKey: logKey,
+    });
+
     // Stage 2 — build Docker image and push to ECR.
     const buildProject = new codebuild.PipelineProject(this, 'BuildProject', {
       description: 'Builds and pushes the Docker image to ECR',
@@ -62,6 +96,13 @@ export class PipelineStack extends cdk.Stack {
       },
       environmentVariables: {
         ECR_REPO_URI: { value: ecrRepoUri },
+      },
+      logging: {
+        cloudWatch: {
+          logGroup: buildLogGroup.logGroup,
+          prefix: 'build',
+          enabled: true,
+        },
       },
       buildSpec: codebuild.BuildSpec.fromObject({
         version: '0.2',
@@ -106,6 +147,13 @@ export class PipelineStack extends cdk.Stack {
     // Stage 3 — trigger rolling ECS update and App Runner deployment.
     const deployProject = new codebuild.PipelineProject(this, 'DeployProject', {
       description: 'Triggers ECS rolling update and App Runner redeployment',
+      logging: {
+        cloudWatch: {
+          logGroup: deployLogGroup.logGroup,
+          prefix: 'deploy',
+          enabled: true,
+        },
+      },
       environment: {
         buildImage: codebuild.LinuxBuildImage.STANDARD_7_0,
       },

@@ -42,7 +42,7 @@ export class AppRunnerApi extends Construct {
     });
 
     const logGroup = new LogGroup(this, 'LogGroup', {
-      logGroupName: '/file-api/app-runner',
+      logGroupName: '/file-api/app-runner/application',
       // LogGroup expects KmsKey (our construct), not kms.Key.
       encryptionKey: logKey,
       removalPolicy: props.removalPolicy,

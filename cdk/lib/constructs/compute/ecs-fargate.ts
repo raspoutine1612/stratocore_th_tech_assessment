@@ -93,7 +93,7 @@ export class EcsFargate extends Construct {
 
     this.securityGroup = new ec2.SecurityGroup(this, 'SecurityGroup', {
       vpc: props.vpc,
-      description: 'ECS tasks — allows inbound from ALB only',
+      description: 'ECS tasks - allows inbound from ALB only',
       allowAllOutbound: true,
     });
 

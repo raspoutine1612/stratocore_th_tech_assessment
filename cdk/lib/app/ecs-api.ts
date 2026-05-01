@@ -45,7 +45,7 @@ export class EcsApi extends Construct {
     });
 
     const logGroup = new LogGroup(this, 'LogGroup', {
-      logGroupName: '/file-api/ecs',
+      logGroupName: '/file-api/ecs/application',
       // LogGroup expects KmsKey (our construct), not kms.Key.
       encryptionKey: logKey,
       removalPolicy: props.removalPolicy,

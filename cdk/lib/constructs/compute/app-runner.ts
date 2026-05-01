@@ -87,6 +87,17 @@ export class AppRunner extends Construct {
       ([name, value]) => ({ name, value }),
     );
 
+    // App Runner requires an explicit ObservabilityConfiguration resource when
+    // observabilityEnabled is true — passing just the flag without an ARN causes
+    // a 400 from the API.
+    const observability = new apprunner.CfnObservabilityConfiguration(
+      this,
+      'ObservabilityConfig',
+      {
+        traceConfiguration: { vendor: 'AWSXRAY' },
+      },
+    );
+
     // App Runner L1 construct — no stable L2 is available in aws-cdk-lib.
     const service = new apprunner.CfnService(this, 'Service', {
       sourceConfiguration: {
@@ -118,6 +129,7 @@ export class AppRunner extends Construct {
       },
       observabilityConfiguration: {
         observabilityEnabled: true,
+        observabilityConfigurationArn: observability.attrObservabilityConfigurationArn,
       },
     });
 
