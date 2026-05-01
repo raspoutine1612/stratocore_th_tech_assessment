@@ -1,0 +1,2 @@
+Hello from the file storage API!
+This is a plain text test fixture.

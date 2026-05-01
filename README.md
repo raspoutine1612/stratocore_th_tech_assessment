@@ -216,6 +216,36 @@ Files are namespaced per user: `files/{username}/{filename}`. Filenames are vali
 
 ## Technology Choices
 
+### Why S3 for file storage?
+Files are arbitrary binary blobs of unknown size — S3 is the natural fit. The alternatives considered:
+- **EFS** — works, but requires a mount target in every subnet, adds ~$0.30/GB/month, and is overkill for a stateless HTTP API.
+- **Storing files in DynamoDB** — DynamoDB items are capped at 400 KB. Storing binary content in a database is the wrong abstraction regardless.
+- **RDS / blob columns** — adds a managed DB instance (~$15/month minimum), connection pooling complexity, and no durability advantage over S3.
+
+S3 gives unlimited storage, built-in durability (11 nines), per-object lifecycle management (Glacier after 90 days, delete after 365), and SDK support in every Lambda/ECS runtime — with zero infrastructure to manage.
+
+### Which serverless alternatives were explored?
+
+**Compute options:**
+
+| Option | Why not chosen |
+|---|---|
+| **AWS Lambda** ✅ | Chosen — scales to zero, per-invocation billing, native container image support |
+| **App Runner** | Managed container runtime, but minimum ~$5/month even at zero traffic. No scale-to-zero. |
+| **Fargate Spot / scheduled** | Still requires a cluster and a minimum running task — not truly serverless |
+| **API Gateway + Lambda (ZIP)** | Would require a separate build artifact; the container image approach reuses the exact same image as ECS |
+
+**Routing / trigger options:**
+
+| Option | Why not chosen |
+|---|---|
+| **API Gateway HTTP API** ✅ | Chosen — lowest latency and cost of the API GW tiers, native HTTPS, supports JWT/IAM authorizers if needed later |
+| **API Gateway REST API** | ~3.5× more expensive, adds request/response mapping overhead, features not needed here |
+| **Lambda Function URL** | Simplest option, but no throttling, no WAF integration, no stage management |
+| **ALB → Lambda** | Would expose Lambda behind the same ALB as ECS, coupling two independent compute targets to a shared network resource |
+
+HTTP API was the right balance: it provides a proper managed HTTPS endpoint with built-in throttling and a clean ARN, without the cost and complexity of REST API.
+
 ### Why FastAPI?
 Async-first, automatic OpenAPI docs, native type hints with Pydantic validation. Minimal boilerplate for a REST API of this size.
 
@@ -321,140 +351,6 @@ npx cdk deploy file-api-pipeline --profile stratocore-dev --require-approval nev
 ```
 
 After first deploy, push to `main` — CodePipeline handles all subsequent deployments automatically.
-
-
----
-
-## Architecture Overview
-
-```plantuml
-@startuml
-!define AWSPuml https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/v18.0/dist
-!include AWSPuml/AWSCommon.puml
-!include AWSPuml/NetworkingContentDelivery/ElasticLoadBalancing.puml
-!include AWSPuml/Containers/ElasticContainerService.puml
-!include AWSPuml/Containers/ElasticContainerRegistry.puml
-!include AWSPuml/Compute/Lambda.puml
-!include AWSPuml/Storage/SimpleStorageService.puml
-!include AWSPuml/Database/DynamoDB.puml
-!include AWSPuml/ManagementGovernance/CloudWatch.puml
-!include AWSPuml/SecurityIdentityCompliance/IdentityandAccessManagement.puml
-!include AWSPuml/DeveloperTools/CodePipeline.puml
-!include AWSPuml/DeveloperTools/CodeBuild.puml
-!include AWSPuml/ManagementGovernance/SystemsManagerParameterStore.puml
-
-skinparam backgroundColor #FAFAFA
-skinparam rectangle {
-  BorderColor #666666
-  FontColor #333333
-}
-
-actor "Client" as client
-
-rectangle "AWS Cloud" {
-
-  rectangle "VPC" {
-    rectangle "Public Subnets" {
-      ElasticLoadBalancing(alb, "Application Load Balancer", "HTTPS :443")
-    }
-    rectangle "Private Subnets" {
-      ElasticContainerService(ecs, "ECS Fargate\n(FastAPI container)", "Target 1 — Containerized")
-    }
-  }
-
-  rectangle "Serverless" {
-    Lambda(lambda, "Lambda + Mangum\n(FastAPI handler)", "Target 2 — Serverless")
-  }
-
-  ElasticContainerRegistry(ecr, "ECR\n(Basic scan on push)", "Docker image registry")
-  SimpleStorageService(s3, "S3 Bucket\nfiles/{username}/{filename}", "Persistent storage — KMS encrypted")
-  DynamoDB(dynamo, "DynamoDB\nusers table", "Authentication — KMS encrypted")
-  CloudWatch(cw, "CloudWatch\nLog Groups", "Application logs")
-  IdentityandAccessManagement(iam, "IAM Roles\nTask Role / Lambda Role", "Least privilege")
-  SystemsManagerParameterStore(ssm, "SSM Parameter Store", "Cross-stack ARN references")
-
-  rectangle "CI/CD" {
-    CodePipeline(pipeline, "CodePipeline", "Three-stage deployment")
-    CodeBuild(build, "CodeBuild", "Quality gate + build + deploy")
-  }
-}
-
-client --> alb : HTTPS (Basic Auth header)
-alb --> ecs : Forward (private subnet)
-client --> lambda : HTTPS Function URL\n(Basic Auth header)
-
-ecs --> s3 : PutObject / GetObject\nDeleteObject / ListBucket
-lambda --> s3 : PutObject / GetObject\nDeleteObject / ListBucket
-
-ecs --> dynamo : GetItem (auth check)
-lambda --> dynamo : GetItem (auth check)
-
-ecr --> ecs : Pull image
-ecs --> cw : awslogs driver
-lambda --> cw : Lambda logs
-
-iam --> ecs : Task role
-iam --> lambda : Execution role
-
-pipeline --> build : Trigger on commit
-build --> ecr : docker push + ECR scan
-build --> ecs : ECS rolling update
-build --> lambda : Lambda function update
-
-ssm --> pipeline : ARN cross-stack refs
-
-@enduml
-```
-
----
-
-## Repository Structure
-
-```
-.
-├── app/
-│   ├── main.py            # FastAPI application — route definitions only
-│   ├── auth.py            # HTTP Basic Auth + DynamoDB password verification
-│   ├── storage.py         # S3 operations (upload, list, delete)
-│   ├── Dockerfile
-│   └── requirements.txt
-├── cdk/
-│   ├── bin/
-│   │   └── app.ts         # CDK entrypoint — instantiates all stacks in order
-│   └── lib/
-│       ├── stacks/
-│       │   ├── shared-stack.ts    # S3, ECR, DynamoDB + SSM writes
-│       │   ├── network-stack.ts   # VPC, ALB, Security Groups
-│       │   ├── ecs-stack.ts       # ECS Cluster, Task Definition, Service
-│       │   └── lambda-stack.ts    # Lambda Function + Function URL
-│       └── constructs/
-│           ├── file-storage-construct.ts   # S3 + KMS key
-│           ├── auth-table-construct.ts     # DynamoDB users table + KMS key
-│           ├── secure-api-construct.ts     # ECS task + ALB wiring
-│           └── quality-pipeline-construct.ts # CodePipeline 3 stages
-├── buildspec.yml          # CodeBuild specification
-├── CLAUDE.md              # Coding guidelines for this project
-└── README.md
-```
-
----
-
-## CDK Stack Organization
-
-Cross-stack references are resolved via **SSM Parameter Store**. Each stack is fully independent and can be deployed separately. Stacks are thin — they instantiate constructs and write SSM parameters, nothing else.
-
-### Deployment order
-
-```
-SharedStack → NetworkStack → EcsStack → LambdaStack
-```
-
-### SharedStack
-Creates shared resources and writes their ARNs/names to SSM:
-- **S3 Bucket** — KMS encrypted, lifecycle policy, public access blocked, HTTPS enforced
-- **ECR Repository** — basic image scan on push enabled
-- **DynamoDB Table** — `users` table, KMS encrypted, on-demand billing
-- Writes to SSM: `bucket-name`, `bucket-arn`, `ecr-repo-uri`, `dynamo-table-name`, `dynamo-table-arn`
 
 ### NetworkStack
 Reads from SSM. Creates:
